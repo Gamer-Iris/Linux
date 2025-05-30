@@ -1,0 +1,47 @@
+kind: PersistentVolume
+apiVersion: v1
+metadata:
+  name: alertmanager
+  namespace: monitoring
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Recycle
+  storageClassName: alertmanager-nfs-storage-class
+  nfs:
+    server: ubuntu-102.server.com
+    path: /mnt/share/kubernetes/alertmanager
+---
+kind: PersistentVolume
+apiVersion: v1
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Recycle
+  storageClassName: prometheus-nfs-storage-class
+  nfs:
+    server: ubuntu-102.server.com
+    path: /mnt/share/kubernetes/prometheus
+---
+kind: PersistentVolume
+apiVersion: v1
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: grafana-nfs-storage-class
+  nfs:
+    server: ubuntu-102.server.com
+    path: /mnt/share/kubernetes/grafana
