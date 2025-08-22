@@ -1,0 +1,23 @@
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+  name: alertmanager-nfs-storage-class
+  namespace: monitoring
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+---
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+  name: prometheus-nfs-storage-class
+  namespace: monitoring
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+---
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+  name: grafana-nfs-storage-class
+  namespace: monitoring
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
