@@ -1,0 +1,79 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: minecraft-proxy-pv
+  namespace: minecraft
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Recycle
+  storageClassName: minecraft-proxy-nfs-storage-class
+  nfs:
+    server: ubuntu-102.server.com
+    path: /mnt/share/kubernetes/minecraft/proxy
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: minecraft-server1-pv
+  namespace: minecraft
+spec:
+  capacity:
+    storage: 15Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Recycle
+  storageClassName: minecraft-server1-nfs-storage-class
+  nfs:
+    server: ubuntu-102.server.com
+    path: /mnt/share/kubernetes/minecraft/server1
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: minecraft-backup1-pv
+  namespace: minecraft
+spec:
+  capacity:
+    storage: 275Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Recycle
+  storageClassName: minecraft-backup1-nfs-storage-class
+  nfs:
+    server: ubuntu-102.server.com
+    path: /mnt/share/kubernetes/minecraft/backup1
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: minecraft-server2-pv
+  namespace: minecraft
+spec:
+  capacity:
+    storage: 15Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Recycle
+  storageClassName: minecraft-server2-nfs-storage-class
+  nfs:
+    server: ubuntu-102.server.com
+    path: /mnt/share/kubernetes/minecraft/server2
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: minecraft-backup2-pv
+  namespace: minecraft
+spec:
+  capacity:
+    storage: 275Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Recycle
+  storageClassName: minecraft-backup2-nfs-storage-class
+  nfs:
+    server: ubuntu-102.server.com
+    path: /mnt/share/kubernetes/minecraft/backup2

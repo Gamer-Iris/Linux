@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: wordpress-pv
+  namespace: wordpress
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Recycle
+  storageClassName: wordpress-nfs-storage-class
+  nfs:
+    server: ubuntu-102.server.com
+    path: /mnt/share/kubernetes/wordpress
