@@ -1,0 +1,21 @@
+# キャッシュ設定
+cache:
+  expireSeconds: 5 # キャッシュの有効期限（秒）
+
+# ログ設定
+log:
+  rotationIntervalHours: 0.01 # ログのローテーション間隔（時間）
+  retentionDays: 1 # ログの保持日数（日）
+
+# 定期メンテナンス設定
+maintenance:
+  cleanupIntervalHours: 0.01 # playersテーブルのクリーンアップ実行間隔（時間）
+  cleanupThresholdDays: 1 # playersテーブルの最終更新日がこの日数より前のデータを削除（日）
+  syncIntervalSeconds: 10 # playersテーブルの同期間隔（秒）
+
+# デフォルト挨拶メッセージ
+default:
+  loginMessage: "%s さんがログインしました！" # ログイン時のデフォルト挨拶
+  logoutMessage: "%s さんがログアウトしました！" # ログアウト時のデフォルト挨拶
+  kickMessage: "%s さんがキックされました！" # キック時のデフォルト挨拶
+  banMessage: "%s さんがBANされました！" # BAN時のデフォルト挨拶

@@ -1,0 +1,29 @@
+# プルリクエスト時にテストを実行するワークフロー
+name: Test on Pull Request
+
+# ワークフローの設定構築
+on:
+  pull_request:
+    branches: ["main"]
+
+# Ubuntuの最新環境でジョブを実行
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # ジョブのステップ
+    steps:
+
+      # リポジトリのコードをチェックアウト
+      - uses: actions/checkout@v3
+
+      # Java環境のセットアップ
+      - uses: actions/setup-java@v3
+        with:
+          java-version: "23"
+          distribution: "temurin"
+
+      # テスト実行ステップの名前
+      - name: Run Tests
+        run: mvn test
+        working-directory: platforms/applications/minecraft/greetmate
