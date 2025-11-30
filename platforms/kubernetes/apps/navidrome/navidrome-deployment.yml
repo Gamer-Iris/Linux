@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: navidrome
+  namespace: navidrome
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: navidrome
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: navidrome
+    spec:
+      containers:
+        - name: navidrome
+          image: deluan/navidrome:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 4533
+              name: navidrome
+          env:
+            - name: ND_SCANSCHEDULE
+              value: "1h"
+            - name: ND_LOGLEVEL
+              value: "info"
+            - name: ND_BASEURL
+              value: ""
+          volumeMounts:
+            - name: navidrome-data-volumes
+              mountPath: /data
+            - name: navidrome-music-volumes
+              mountPath: /music
+              readOnly: true
+      volumes:
+        - name: navidrome-data-volumes
+          persistentVolumeClaim:
+            claimName: navidrome-data-pvc
+        - name: navidrome-music-volumes
+          persistentVolumeClaim:
+            claimName: navidrome-music-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: navidrome-service
+  namespace: navidrome
+spec:
+  selector:
+    app: navidrome
+  ports:
+    - protocol: TCP
+      port: 4533
+      targetPort: 4533
+  type: LoadBalancer
+  loadBalancerIP: 192.168.11.80

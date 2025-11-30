@@ -1,0 +1,22 @@
+# Maven
+/platforms/applications/minecraft/greetmate/target/
+
+# Build
+/platforms/applications/minecraft/greetmate/build/
+/platforms/applications/minecraft/greetmate/logs/
+
+# Java
+*.class
+
+# Python
+*.pyc
+
+# Log
+*.log
+
+# VS Code
+/.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
