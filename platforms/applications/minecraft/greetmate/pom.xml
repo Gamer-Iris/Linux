@@ -8,7 +8,7 @@
     <!-- グループID、アーティファクトID、バージョン情報 -->
     <groupId>com.gamer_iris</groupId>
     <artifactId>Greetmate</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
 
     <properties>
         <!-- Javaバージョンおよびエンコーディングの指定 -->
@@ -119,9 +119,6 @@
                                     <excludes>
                                         <exclude>META-INF/**</exclude>
                                         <exclude>META-INF.versions/**</exclude>
-                                        <exclude>deprecated.properties</exclude>
-                                        <exclude>driver.properties</exclude>
-                                        <exclude>mariadb.properties</exclude>
                                     </excludes>
                                 </filter>
                                 <filter>
