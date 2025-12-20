@@ -368,7 +368,7 @@ VMを起動
 下記へアクセス
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 http://192.168.11.XX:8006
-（ユーザー名：admin、PW：設定したパスワード）
+（ユーザー名：truenas_admin、PW：設定したパスワード）
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 「System Settings」→「General」→「Localization」→「Settings」→「Language」→「Japanese (ja)」
 「Console Keyboard Map」→「Japanese (jp)」
