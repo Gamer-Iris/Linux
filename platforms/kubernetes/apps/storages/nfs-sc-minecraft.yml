@@ -1,0 +1,39 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: minecraft-proxy-cephfs-storage-class
+  namespace: minecraft
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: minecraft-server1-cephfs-storage-class
+  namespace: minecraft
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: minecraft-backup1-cephfs-storage-class
+  namespace: minecraft
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: minecraft-server2-cephfs-storage-class
+  namespace: minecraft
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: minecraft-backup2-cephfs-storage-class
+  namespace: minecraft
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer

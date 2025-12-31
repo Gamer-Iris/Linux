@@ -1,0 +1,39 @@
+name: Greetmate
+version: 1.0.0
+main: com.gamer_iris.Main
+api-version: 1.21.11
+load: POSTWORLD
+author: Gamer-Iris
+description: ログイン・ログアウト・キック・BAN時の挨拶通知を行うプラグイン。
+
+commands:
+  greetban:
+    description: プレイヤーをBANします
+    usage: /greetban <player> <reason>
+    permission: greetmate.command.greetban
+    permission-message: 権限がありません。
+
+  greetrole:
+    description: メンバーのロール情報を操作します
+    usage: /greetrole <set|register|del> <player> <role>
+    permission: greetmate.command.greetrole
+    permission-message: 権限がありません。
+
+  greetunban:
+    description: プレイヤーのBANを解除します
+    usage: /greetunban <player>
+    permission: greetmate.command.greetunban
+    permission-message: 権限がありません。
+
+permissions:
+  greetmate.command.greetban:
+    description: greetbanコマンドの実行権限（※role = 3 or 4 に限る）
+    default: false
+
+  greetmate.command.greetrole:
+    description: greetroleコマンドの実行権限（※role = 3 or 4 に限る）
+    default: false
+
+  greetmate.command.greetunban:
+    description: greetunbanコマンドの実行権限（※role = 3 or 4 に限る）
+    default: false

@@ -1,0 +1,88 @@
+alertmanager:
+  service:
+    loadBalancerIP: 192.168.11.72
+    type: LoadBalancer
+  servicePerReplica:
+    type: LoadBalancer
+  alertmanagerSpec:
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: alertmanager-cephfs-storage-class
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 1Gi
+    nodeSelector:
+      labelname: ubuntu-302
+
+grafana:
+  deploymentStrategy:
+    type: Recreate
+  persistence:
+    enabled: true
+    type: pvc
+    storageClassName: grafana-cephfs-storage-class
+    accessModes: ["ReadWriteOnce"]
+    size: 1Gi
+    finalizers: ["kubernetes.io/pvc-protection"]
+  initChownData:
+    enabled: false
+  defaultDashboardsTimezone: jst
+  securityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+  service:
+    type: LoadBalancer
+    loadBalancerIP: 192.168.11.73
+  nodeSelector:
+    labelname: ubuntu-302
+  imageRenderer:
+    nodeSelector:
+      labelname: ubuntu-302
+
+prometheusOperator:
+  admissionWebhooks:
+    deployment:
+      nodeSelector:
+        labelname: ubuntu-302
+    patch:
+      nodeSelector:
+        labelname: ubuntu-302
+  nodeSelector:
+    labelname: ubuntu-302
+
+prometheus:
+  thanosService:
+    type: LoadBalancer
+  service:
+    loadBalancerIP: 192.168.11.74
+    type: LoadBalancer
+  servicePerReplica:
+    type: LoadBalancer
+  prometheusSpec:
+    nodeSelector:
+      labelname: ubuntu-302
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: prometheus-cephfs-storage-class
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 1Gi
+    securityContext:
+      runAsGroup: 0
+      runAsNonRoot: false
+      runAsUser: 0
+      fsGroup: 0
+
+thanosRuler:
+  thanosRulerSpec:
+    nodeSelector:
+      labelname: ubuntu-302
+
+kube-state-metrics:
+  nodeSelector:
+    labelname: ubuntu-302

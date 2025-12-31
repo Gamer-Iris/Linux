@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflare
+  namespace: cloudflare
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cloudflare
+  template:
+    metadata:
+      labels:
+        app: cloudflare
+    spec:
+      nodeSelector:
+        labelname: ubuntu-302
+      containers:
+      - name: cloudflare
+        image: cloudflare/cloudflared:latest
+        imagePullPolicy: Always
+        args:
+          - "tunnel"
+          - "--no-autoupdate"
+          - "run"
+          - "--token"
+          - "$(CLOUDFLARE_TOKEN)"
+        env:
+          - name: CLOUDFLARE_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: cloudflare-secret
+                key: CLOUDFLARE_TOKEN

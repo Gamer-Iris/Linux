@@ -1,0 +1,109 @@
+# プラグインのビルド、リリースを行うワークフロー
+name: Build and Release
+
+# ワークフローの設定構築
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_to_servers:
+        description: 'デプロイ処理を実行しますか？'
+        required: true
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+        default: 'false'
+
+# Ubuntuの最新環境でジョブを実行
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
+      artifact: ${{ steps.extract.outputs.artifact }}
+
+    steps:
+      # リポジトリのコードをチェックアウト
+      - uses: actions/checkout@v3
+
+      # Java環境のセットアップ
+      - uses: actions/setup-java@v3
+        with:
+          java-version: "23"
+          distribution: "temurin"
+
+      # pom.xml からバージョンとアーティファクトIDを取得
+      - name: Extract version & artifactId from pom.xml
+        id: extract
+        run: |
+          version=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          artifact=$(mvn help:evaluate -Dexpression=project.artifactId -q -DforceStdout)
+          echo "VERSION=$version" >> $GITHUB_ENV
+          echo "ARTIFACT=$artifact" >> $GITHUB_ENV
+          echo "version=$version" >> $GITHUB_OUTPUT
+          echo "artifact=$artifact" >> $GITHUB_OUTPUT
+        working-directory: platforms/applications/minecraft/greetmate
+
+      # プラグインのビルドを実行
+      - name: Build plugin
+        run: mvn clean package
+        working-directory: platforms/applications/minecraft/greetmate
+
+      # ビルドしたJARファイルをアーティファクトとしてアップロード
+      - name: Upload plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          if-no-files-found: error
+          name: plugin-jar
+          path: platforms/applications/minecraft/greetmate/target/${{ steps.extract.outputs.artifact }}-${{ steps.extract.outputs.version }}.jar
+
+      # GitHubのリリースにjarファイルをアップロード
+      - name: Release jar on GitHub 
+        uses: softprops/action-gh-release@v1
+        with:
+          name: "${{ steps.extract.outputs.artifact }} v${{ steps.extract.outputs.version }}"
+          tag_name: "v${{ steps.extract.outputs.version }}"
+          files: platforms/applications/minecraft/greetmate/target/${{ steps.extract.outputs.artifact }}-${{ steps.extract.outputs.version }}.jar
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # プラグインJARをサーバーに配置（ローカルRunner上で実行）
+  deploy-jar:
+    needs: build
+    if: ${{ github.event.inputs.deploy_to_servers == 'true' }}
+    runs-on: [self-hosted, plugin-runner]
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: plugin-jar
+
+      # JARファイルを対象パスに配置し、旧JARを削除
+      - name: Deploy JAR locally
+        run: |
+          JAR_NAME="${{ needs.build.outputs.artifact }}-${{ needs.build.outputs.version }}.jar"
+          rm -f /mnt/share/kubernetes/minecraft/server1/plugins/${{ needs.build.outputs.artifact }}-*.jar
+          rm -f /mnt/share/kubernetes/minecraft/server2/plugins/${{ needs.build.outputs.artifact }}-*.jar
+          cp "${JAR_NAME}" /mnt/share/kubernetes/minecraft/server1/plugins/
+          cp /mnt/share/kubernetes/minecraft/server1/plugins/${JAR_NAME} /mnt/share/kubernetes/minecraft/server2/plugins/
+
+  # RCON経由でリロードを実行（ローカルRunner上で実行）
+  rcon-reload:
+    needs: deploy-jar
+    if: ${{ github.event.inputs.deploy_to_servers == 'true' }}
+    runs-on: [self-hosted, rcon-runner]
+
+    steps:
+      # RCON経由で各サーバーのプラグインを有効化
+      - name: Reload Minecraft servers via RCON
+        run: |
+          RCON_COMMAND_01="plugman reload greetmate"
+          KEY=$(yq eval '.key' ~/Linux/platforms/settings/settings.yml)
+          NFS_HOST=$(yq eval '.nfs.host' ~/Linux/platforms/settings/settings.yml)
+          NFS_USERNAME=$(yq eval '.nfs.username' ~/Linux/platforms/settings/settings.yml)
+
+          RCON_PASSWORD_01=$(ssh -i "${KEY}" "${NFS_USERNAME}"@"${NFS_HOST}" "grep 'rcon.password' /mnt/share/kubernetes/minecraft/server1/server.properties | cut -d'=' -f2")
+          RCON_PASSWORD_02=$(ssh -i "${KEY}" "${NFS_USERNAME}"@"${NFS_HOST}" "grep 'rcon.password' /mnt/share/kubernetes/minecraft/server2/server.properties | cut -d'=' -f2")
+
+          mcrcon -H minecraft.server1.com -P 25575 -p "${RCON_PASSWORD_01}" "${RCON_COMMAND_01}"
+          mcrcon -H minecraft.server2.com -P 25575 -p "${RCON_PASSWORD_02}" "${RCON_COMMAND_01}"

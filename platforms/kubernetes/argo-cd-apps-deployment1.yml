@@ -1,0 +1,37 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: namespaces
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'git@github.com:Gamer-Iris/Linux.git'
+    targetRevision: HEAD
+    path: './platforms/kubernetes/apps/namespaces'
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: namespaces
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: storages
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'git@github.com:Gamer-Iris/Linux.git'
+    targetRevision: HEAD
+    path: './platforms/kubernetes/apps/storages'
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: storages
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

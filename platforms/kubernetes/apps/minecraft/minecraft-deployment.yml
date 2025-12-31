@@ -1,0 +1,249 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minecraft-server1
+  namespace: minecraft
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minecraft-server1
+  template:
+    metadata:
+      labels:
+        app: minecraft-server1
+    spec:
+      volumes:
+      - name: minecraft-server1-volumes
+        persistentVolumeClaim:
+          claimName: minecraft-server1-pvc        # 1つ目のサーバはminecraft-server1-pvcを使用
+      - name: minecraft-backup1-volumes
+        persistentVolumeClaim:
+          claimName: minecraft-backup1-pvc        # 1つ目のバックアップサーバはminecraft-server1-pvcを使用
+      containers:
+      - name: minecraft-server1
+        image: itzg/minecraft-server:java23
+        env:
+        - name: TYPE
+          value: PAPER                            # サーバー種類の設定
+        - name: EULA
+          value: "TRUE"                           # 利用規約書への同意設定
+        - name: LEVEL
+          value: "1.21.11"                        # バージョンの設定（ご自分の環境に合わせてください。）
+        - name: VERSION
+          value: "1.21.11"                        # バージョンの設定（ご自分の環境に合わせてください。）
+        - name: DIFFICULTY
+          value: "hard"                           # World生成時の難易度の設定
+        - name: ENFORCE_SECURE_PROFILE
+          value: "FALSE"                          # Mojang公開鍵を持つ正式ユーザーのみログイン可能になる設定
+        - name: MAX_PLAYERS
+          value: "10"                             # 最大参加人数の設定
+        - name: MAX_TICK_TIME
+          value: "-1"                             # サーバーのWatchdog監視時間（高負荷を掛ける時用に基本は"-1"を指定しておくこと。）
+        - name: MODE
+          value: "survival"                       # World生成時のゲームモードの設定
+        - name: MOTD
+          value: "MC-Kuvernetes-1"                # ランチャーでサーバリストに表示するサーバの説明設定
+        - name: ONLINE_MODE
+          value: "FALSE"                          # オンラインモードの設定
+        - name: ENABLE_WHITELIST
+          value: "TRUE"                           # ホワイトリストの設定
+        - name: SPAWN_PROTECTION
+          value: "0"                              # スポーン地点の保護範囲の設定
+        - name: SERVER_NAME
+          value: "minecraft.server1.com"          # サーバのドメイン名の設定
+        - name: TZ
+          value: "Asia/Tokyo"                     # タイムゾーンの設定
+        - name: MEMORY
+          value: "12G"                            # 割り当てるメモリの設定（resources_limitsと同じ値にしておくこと。ご自分の環境に合わせてください。）
+        - name: MINECRAFT_DB_URL
+          valueFrom:
+            secretKeyRef:
+              name: minecraft-secret
+              key: MINECRAFT_DB_URL1              # minecraft_greetmate1のDB接続URL（Secretから取得）
+        - name: MINECRAFT_DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: minecraft-secret
+              key: MINECRAFT_DB_USERNAME1         # minecraft_greetmate1のDB接続ユーザー名（Secretから取得）
+        - name: MINECRAFT_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: minecraft-secret
+              key: MINECRAFT_DB_PASSWORD1         # minecraft_greetmate1のDB接続パスワード（Secretから取得）
+        resources:
+          limits:
+            memory: "12Gi"                        # k8s-worker-node内で割り当ててもらうメモリの上限設定（VMに積んでる以上のメモリサイズは不可。ご自分の環境に合わせてください。）
+        volumeMounts:
+        - name: minecraft-server1-volumes
+          mountPath: "/data"
+      - name: minecraft-backup-1
+        image: itzg/mc-backup
+        securityContext:
+          runAsUser: 1000
+        env:
+        - name: INITIAL_DELAY
+          value: "120"                            # バックアップ取得開始する前の待機時間（単位：秒）
+        - name: BACKUP_INTERVAL
+          value: "6h"                             # バックアップの取得頻度
+        - name: PRUNE_BACKUPS_DAYS
+          value: "7"                              # バックアップの保持期間（単位：日）
+        - name: TZ
+          value: "Asia/Tokyo"                     # タイムゾーンの設定
+        volumeMounts:
+        - name: minecraft-server1-volumes
+          mountPath: "/data"
+          readOnly: true
+        - name: minecraft-backup1-volumes
+          mountPath: "/backups"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minecraft-server2
+  namespace: minecraft
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minecraft-server2
+  template:
+    metadata:
+      labels:
+        app: minecraft-server2
+    spec:
+      volumes:
+      - name: minecraft-server2-volumes
+        persistentVolumeClaim:
+          claimName: minecraft-server2-pvc        # 2つ目のサーバはminecraft-server2-pvcを使用
+      - name: minecraft-backup2-volumes
+        persistentVolumeClaim:
+          claimName: minecraft-backup2-pvc        # 2つ目のバックアップサーバはminecraft-server2-pvcを使用
+      containers:
+      - name: minecraft-server2
+        image: itzg/minecraft-server:java23
+        env:
+        - name: TYPE
+          value: PAPER                            # サーバー種類の設定
+        - name: EULA
+          value: "TRUE"                           # 利用規約書への同意設定
+        - name: LEVEL
+          value: "1.21.11"                        # バージョンの設定（ご自分の環境に合わせてください。）
+        - name: VERSION
+          value: "1.21.11"                        # バージョンの設定（ご自分の環境に合わせてください。）
+        - name: DIFFICULTY
+          value: "hard"                           # World生成時の難易度の設定
+        - name: ENFORCE_SECURE_PROFILE
+          value: "FALSE"                          # Mojang公開鍵を持つ正式ユーザーのみログイン可能になる設定
+        - name: MAX_PLAYERS
+          value: "10"                             # 最大参加人数の設定
+        - name: MAX_TICK_TIME
+          value: "-1"                             # サーバーのWatchdog監視時間（高負荷を掛ける時用に基本は"-1"を指定しておくこと。）
+        - name: MODE
+          value: "survival"                       # World生成時のゲームモードの設定
+        - name: MOTD
+          value: "MC-Kuvernetes-2"                # ランチャーでサーバリストに表示するサーバの説明設定
+        - name: ONLINE_MODE
+          value: "FALSE"                          # オンラインモードの設定
+        - name: ENABLE_WHITELIST
+          value: "TRUE"                           # ホワイトリストの設定
+        - name: SPAWN_PROTECTION
+          value: "0"                              # スポーン地点の保護範囲の設定
+        - name: SERVER_NAME
+          value: "minecraft.server2.com"          # サーバのドメイン名の設定
+        - name: TZ
+          value: "Asia/Tokyo"                     # タイムゾーンの設定
+        - name: MEMORY
+          value: "12G"                            # 割り当てるメモリの設定（resources_limitsと同じ値にしておくこと。ご自分の環境に合わせてください。）
+        - name: MINECRAFT_DB_URL
+          valueFrom:
+            secretKeyRef:
+              name: minecraft-secret
+              key: MINECRAFT_DB_URL2              # minecraft_greetmate2のDB接続URL（Secretから取得）
+        - name: MINECRAFT_DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: minecraft-secret
+              key: MINECRAFT_DB_USERNAME2         # minecraft_greetmate2のDB接続ユーザー名（Secretから取得）
+        - name: MINECRAFT_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: minecraft-secret
+              key: MINECRAFT_DB_PASSWORD2         # minecraft_greetmate2のDB接続パスワード（Secretから取得）
+        resources:
+          limits:
+            memory: "12Gi"                        # k8s-worker-node内で割り当ててもらうメモリの上限設定（VMに積んでる以上のメモリサイズは不可。ご自分の環境に合わせてください。）
+        volumeMounts:
+        - name: minecraft-server2-volumes
+          mountPath: "/data"
+      - name: minecraft-backup-2
+        image: itzg/mc-backup
+        securityContext:
+          runAsUser: 1000
+        env:
+        - name: INITIAL_DELAY
+          value: "120"                            # バックアップ取得開始する前の待機時間（単位：秒）
+        - name: BACKUP_INTERVAL
+          value: "6h"                             # バックアップの取得頻度
+        - name: PRUNE_BACKUPS_DAYS
+          value: "7"                              # バックアップの保持期間（単位：日）
+        - name: TZ
+          value: "Asia/Tokyo"                     # タイムゾーンの設定
+        volumeMounts:
+        - name: minecraft-server2-volumes
+          mountPath: "/data"
+          readOnly: true
+        - name: minecraft-backup2-volumes
+          mountPath: "/backups"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minecraft-server1
+  namespace: minecraft
+  labels:
+    app: minecraft-server1
+spec:
+  type: LoadBalancer
+  loadBalancerIP: 192.168.11.78
+  ports:
+    - name: bluemap-port
+      port: 8100
+      protocol: TCP
+      targetPort: 8100
+    - name: minecraft-port
+      port: 25565
+      protocol: TCP
+      targetPort: 25565
+    - name: minecraft-rcon
+      port: 25575
+      protocol: TCP
+      targetPort: 25575
+  selector:
+    app: minecraft-server1
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minecraft-server2
+  namespace: minecraft
+  labels:
+    app: minecraft-server2
+spec:
+  type: LoadBalancer
+  loadBalancerIP: 192.168.11.79
+  ports:
+    - name: bluemap-port
+      port: 8100
+      protocol: TCP
+      targetPort: 8100
+    - name: minecraft-port
+      port: 25565
+      protocol: TCP
+      targetPort: 25565
+    - name: minecraft-rcon
+      port: 25575
+      protocol: TCP
+      targetPort: 25575
+  selector:
+    app: minecraft-server2

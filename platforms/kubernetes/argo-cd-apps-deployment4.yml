@@ -1,0 +1,173 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cloudflare
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'git@github.com:Gamer-Iris/Linux.git'
+    targetRevision: HEAD
+    path: './platforms/kubernetes/apps/cloudflare'
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: cloudflare
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: coredns
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'git@github.com:Gamer-Iris/Linux.git'
+    targetRevision: HEAD
+    path: './platforms/kubernetes/apps/coredns'
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: coredns
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mariadb-phpmyadmin
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'git@github.com:Gamer-Iris/Linux.git'
+    targetRevision: HEAD
+    path: './platforms/kubernetes/apps/mariadb-phpmyadmin'
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: mariadb-phpmyadmin
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: metallb
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'git@github.com:Gamer-Iris/Linux.git'
+    targetRevision: HEAD
+    path: './platforms/kubernetes/apps/metallb'
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: metallb
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: minecraft
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'git@github.com:Gamer-Iris/Linux.git'
+    targetRevision: HEAD
+    path: './platforms/kubernetes/apps/minecraft'
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: minecraft
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: false
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'https://prometheus-community.github.io/helm-charts'
+    targetRevision: 80.4.1
+    chart: kube-prometheus-stack
+    helm:
+      valueFiles:
+        - https://raw.githubusercontent.com/Gamer-Iris/Linux/main/platforms/kubernetes/apps/monitoring/values.yaml
+      parameters:
+        - name: alertmanager.config.global.resolve_timeout
+          value: "5m"
+        - name: alertmanager.config.route.group_by[0]
+          value: "alertname"
+        - name: alertmanager.config.route.receiver
+          value: "discord"
+        - name: alertmanager.config.route.routes[0].matchers[0]
+          value: "alertname = Watchdog"
+        - name: alertmanager.config.route.routes[0].receiver
+          value: "discord"
+        - name: alertmanager.config.receivers[0].name
+          value: "discord"
+        - name: alertmanager.config.receivers[0].discord_configs[0].webhook_url
+          value: "ご自分の環境に合わせてください。"
+        - name: alertmanager.config.receivers[0].discord_configs[0].send_resolved
+          value: "true"
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: false
+    syncOptions:
+      - ServerSideApply=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: navidrome
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'git@github.com:Gamer-Iris/Linux.git'
+    targetRevision: HEAD
+    path: './platforms/kubernetes/apps/navidrome'
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: navidrome
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: wordpress
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'git@github.com:Gamer-Iris/Linux.git'
+    targetRevision: HEAD
+    path: './platforms/kubernetes/apps/wordpress'
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: wordpress
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

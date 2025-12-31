@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mariadb-phpmyadmin-mariadb-deployment
+  namespace: mariadb-phpmyadmin
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mariadb
+  template:
+    metadata:
+      labels:
+        app: mariadb
+    spec:
+      containers:
+      - name: mariadb
+        image: mariadb:latest
+        ports:
+          - containerPort: 3306
+        env:
+        - name: TZ
+          value: Asia/Tokyo
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mariadb-phpmyadmin-secret
+              key: MYSQL_ROOT_PASSWORD
+        volumeMounts:
+        - name: mariadb-phpmyadmin-volumes
+          mountPath: /var/lib/mysql
+      volumes:
+      - name: mariadb-phpmyadmin-volumes
+        persistentVolumeClaim:
+          claimName: mariadb-phpmyadmin-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mariadb-phpmyadmin-mariadb-service
+  namespace: mariadb-phpmyadmin
+spec:
+  selector:
+    app: mariadb
+  ports:
+    - protocol: TCP
+      port: 3306
+      targetPort: 3306
+      nodePort: 30306
+  type: NodePort
+  clusterIP: 10.96.0.20

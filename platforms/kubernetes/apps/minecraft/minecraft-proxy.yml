@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minecraft-proxy
+  namespace: minecraft
+  labels:
+    app: minecraft-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minecraft-proxy
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: minecraft-proxy
+    spec:
+      containers:
+        - image: itzg/bungeecord
+          name: minecraft-proxy
+          env:
+            - name: TYPE
+              value: BUNGEECORD
+            - name: ENABLE_RCON
+              value: "true"
+            - name: INIT_MEMORY
+              value: 250M
+            - name: MAX_MEMORY
+              value: 1G
+          volumeMounts:
+            - name: minecraft-proxy-volumes
+              mountPath: /server
+      volumes:
+        - name: minecraft-proxy-volumes
+          persistentVolumeClaim:
+            claimName: minecraft-proxy-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minecraft-proxy
+  namespace: minecraft
+  labels:
+    app: minecraft-proxy
+spec:
+  ports:
+    - name: java
+      protocol: TCP
+      port: 25565
+      targetPort: 25565
+    - name: bedrock
+      protocol: UDP
+      port: 19132
+      targetPort: 19132
+  selector:
+    app: minecraft-proxy
+  type: LoadBalancer
+  loadBalancerIP: 192.168.11.77

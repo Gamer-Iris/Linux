@@ -1,0 +1,18 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: secrets
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'git@github.com:Gamer-Iris/Linux.git'
+    targetRevision: HEAD
+    path: './platforms/kubernetes/apps/secrets'
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: secrets
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

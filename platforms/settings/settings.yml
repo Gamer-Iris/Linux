@@ -1,0 +1,27 @@
+username: ご自分の環境に合わせてください。
+password: ご自分の環境に合わせてください。
+key: ~/.ssh/id_ed25519
+databases:
+  oss: ご自分の環境に合わせてください。
+  address: ご自分の環境に合わせてください。
+  database1:
+    databasename: ご自分の環境に合わせてください。
+    username: ご自分の環境に合わせてください。
+    password: ご自分の環境に合わせてください。
+  database2:
+    databasename: ご自分の環境に合わせてください。
+    username: ご自分の環境に合わせてください。
+    password: ご自分の環境に合わせてください。
+  database3:
+    databasename: ご自分の環境に合わせてください。
+    username: ご自分の環境に合わせてください。
+    password: ご自分の環境に合わせてください。
+appnotice:
+  host: ご自分の環境に合わせてください。
+  username: ご自分の環境に合わせてください。
+smb:
+  host: ご自分の環境に合わせてください。
+  username: ご自分の環境に合わせてください。
+  password: ご自分の環境に合わせてください。
+discord:
+  url: ご自分の環境に合わせてください。
