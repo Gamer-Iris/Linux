@@ -781,13 +781,16 @@ tar xzf actions-runner-linux-*.tar.gz
   --url https://github.com/Gamer-Iris/Linux \
   --token ★⑧ \
   --labels self-hosted,plugin-runner
-
+Enter
+Enter
+sudo ./svc.sh install
+sudo ./svc.sh start
+rm .credentials .runner
 ./config.sh \
   --name rcon-runner \
   --url https://github.com/Gamer-Iris/Linux \
   --token ★⑧ \
   --labels self-hosted,rcon-runner
-
 Enter
 Enter
 sudo ./svc.sh install
@@ -824,7 +827,7 @@ kubeadm version
 sudo nano /etc/default/grub
 以下を設定
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-GRUB_CMDLINE_LINUX_DEFAULT="systemd.unified_cgroup_hierarchy=false"
+GRUB_CMDLINE_LINUX_DEFAULT="systemd.unified_cgroup_hierarchy=1"
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 sudo update-grub
 sudo reboot
@@ -833,7 +836,7 @@ sudo reboot
 ０９.Master Node 側設定（Windows_TereTerm（VM（ubuntu-301））側操作）<br>
 
 ```
-sudo kubeadm init --pod-network-cidr=10.244.0.0/16 --ignore-preflight-errors=Mem
+sudo kubeadm init --pod-network-cidr=192.168.0.0/16 --ignore-preflight-errors=Mem
 以下を確認
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 Your Kubernetes control-plane has initialized successfully!
