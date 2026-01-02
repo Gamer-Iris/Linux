@@ -833,29 +833,7 @@ sudo update-grub
 sudo reboot
 ```
 
-０９.[Kubernetes](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/#installing-kubeadm-kubelet-and-kubectl)導入（Windows_TereTerm（VM（k8s 環境全て））側操作）<br>
-
-```
-sudo ln -s /etc/apparmor.d/runc /etc/apparmor.d/disable/
-sudo apparmor_parser -R /etc/apparmor.d/runc
-sudo apt install -y apt-transport-https ca-certificates curl gpg
-LATEST_VERSION=$(curl -s https://api.github.com/repos/kubernetes/kubernetes/releases/latest | grep tag_name | cut -d '"' -f 4 | sed 's/v//g' | cut -d '.' -f 1,2)
-curl -fsSL https://pkgs.k8s.io/core:/stable:/v${LATEST_VERSION}/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v${LATEST_VERSION}/deb/ /" | sudo tee /etc/apt/sources.list.d/kubernetes.list
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y kubeadm kubelet kubectl
-sudo apt-mark hold kubeadm kubelet kubectl
-kubeadm version
-sudo nano /etc/default/grub
-以下を設定
-+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-GRUB_CMDLINE_LINUX="systemd.unified_cgroup_hierarchy=1"
-+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-sudo update-grub
-sudo reboot
-```
-
-１０.containerd 導入（Windows_TereTerm（VM（ubuntu-301））側操作）<br>
+０９.containerd 導入（Windows_TereTerm（VM（ubuntu-301））側操作）<br>
 
 ```
 cd
@@ -881,7 +859,7 @@ sudo nano /etc/containerd/config.toml
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 ```
 
-１１.runc 導入（Windows_TereTerm（VM（ubuntu-301））側操作）<br>
+１０.runc 導入（Windows_TereTerm（VM（ubuntu-301））側操作）<br>
 
 ```
 cd
@@ -895,7 +873,7 @@ sudo mkdir -p /opt/cni/bin
 sudo tar Cxzvf /opt/cni/bin cni-plugins-linux-arm64-${LATEST_VERSION}.tgz
 ```
 
-１２.kubeadm init 設定（Windows_TereTerm（VM（ubuntu-301））側操作）<br>
+１１.kubeadm init 設定（Windows_TereTerm（VM（ubuntu-301））側操作）<br>
 
 ```
 sudo systemctl restart kubelet
@@ -927,14 +905,14 @@ Then you can join any number of worker nodes by running the following on each as
 ★⑨コマンド
 ```
 
-１３.flannel 導入（Windows_TereTerm（VM（ubuntu-301））側操作）<br>
+１２.flannel 導入（Windows_TereTerm（VM（ubuntu-301））側操作）<br>
 
 ```
 curl -LO https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
 kubectl apply -f kube-flannel.yml
 ```
 
-１４.[calico](https://docs.tigera.io/calico/latest/getting-started/kubernetes/quickstart)導入（Windows_TereTerm（VM（ubuntu-301））側操作）<br>
+１３.[calico](https://docs.tigera.io/calico/latest/getting-started/kubernetes/quickstart)導入（Windows_TereTerm（VM（ubuntu-301））側操作）<br>
 
 ```
 cd
@@ -950,7 +928,7 @@ kubectl get pod,svc --all-namespaces -o wide
 sudo rm -r calico.yaml
 ```
 
-１５.Worker Node 側設定（Windows_TereTerm（VM（ubuntu-301 以外））側操作）<br>
+１４.Worker Node 側設定（Windows_TereTerm（VM（ubuntu-301 以外））側操作）<br>
 
 ```
 Master Nodeの.kubeをWorker Nodeへ配置
@@ -962,7 +940,7 @@ kubectl get nodes -o wide
 kubectl -n kube-system get pod -o wide
 ```
 
-１６.各ノードへのラベル付与（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
+１５.各ノードへのラベル付与（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
 
 ```
 kubectl get nodes --show-labels
@@ -973,7 +951,7 @@ kubectl label nodes ubuntu-302 labelname=ubuntu-302
 kubectl get nodes --show-labels
 ```
 
-１７.[Helm](https://github.com/helm/helm/releases)導入（Windows_TereTerm（VM（k8s 環境全て））側操作）<br>
+１６.[Helm](https://github.com/helm/helm/releases)導入（Windows_TereTerm（VM（k8s 環境全て））側操作）<br>
 
 ```
 cd ~/Linux/platforms/kubernetes
@@ -988,7 +966,7 @@ helm version --short
 sudo rm -r helm*.tar.gz
 ```
 
-１８.cifs-utils 導入（Windows_TereTerm（VM（k8s 環境全て））側操作）<br>
+１７.cifs-utils 導入（Windows_TereTerm（VM（k8s 環境全て））側操作）<br>
 
 ```
 sudo apt update && sudo apt upgrade -y
@@ -1000,7 +978,7 @@ which mount.cifs
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 ```
 
-１９.[csi-driver-smb](https://github.com/kubernetes-csi/csi-driver-smb)導入（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
+１８.[csi-driver-smb](https://github.com/kubernetes-csi/csi-driver-smb)導入（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
 
 ```
 helm repo add csi-driver-smb https://raw.githubusercontent.com/kubernetes-csi/csi-driver-smb/master/charts
@@ -1011,7 +989,7 @@ kubectl -n kube-system get pods -l app=csi-smb-controller
 kubectl -n kube-system get pods -l app=csi-smb-node
 ```
 
-２０.metallb 導入（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
+１９.metallb 導入（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
 
 ```
 helm repo add metallb https://metallb.github.io/metallb
@@ -1022,7 +1000,7 @@ helm install metallb metallb/metallb -n metallb-system
 kubectl apply -f ~/Linux/platforms/kubernetes/apps/metallb/metallb-config.yml
 kubectl get pods -n metallb-system -o wide
 ```
-２１.CoreDNS 設定（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
+２０.CoreDNS 設定（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
 
 ```
 kubectl apply -f ~/Linux/platforms/kubernetes/apps/coredns/coredns-configmap.yml
@@ -1031,7 +1009,7 @@ sudo reboot
 kubectl get pods -n kube-system -o wide
 ```
 
-２２.DNS 設定（Windows_TereTerm（VM（k8s 環境全て））側操作）<br>
+２１.DNS 設定（Windows_TereTerm（VM（k8s 環境全て））側操作）<br>
 
 ```
 cd /etc/netplan
@@ -1049,7 +1027,7 @@ nslookup truenas-401.server.com
 nslookup 192.168.11.42
 ```
 
-２３.[mcrcon](https://github.com/Tiiffi/mcrcon)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２２.[mcrcon](https://github.com/Tiiffi/mcrcon)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 cd
@@ -1066,7 +1044,7 @@ mcrcon バージョン番号
 rm -fr ~/mcrcon
 ```
 
-２４.[Argo CD](https://argo-cd.readthedocs.io/en/stable/)導入（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２３.[Argo CD](https://argo-cd.readthedocs.io/en/stable/)導入（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 【Argo CD導入】
@@ -1107,7 +1085,7 @@ argo.pub内容をGithubの該当リポジトリへ登録
 sudo rm -r ~/argo*
 ```
 
-２５.各 app 導入（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２４.各 app 導入（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 【namespace、storage設定】
@@ -1176,7 +1154,7 @@ argocd app sync navidrome
 argocd app sync wordpress
 ```
 
-２６.監視ツール一式設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２５.監視ツール一式設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 kubectl get serviceMonitor -n monitoring
@@ -1205,7 +1183,7 @@ grafana表示内容にてログイン
   ※grafanaはユーザー名：admin、PW：★⑫
 ```
 
-２７.[Navidrome](https://www.navidrome.org)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２６.[Navidrome](https://www.navidrome.org)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 kubectl get svc -n navidrome -o wide
@@ -1218,7 +1196,7 @@ rootユーザーにて、以下を設定
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 ```
 
-２８.DB ツール一式設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２７.DB ツール一式設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 kubectl get svc -n mariadb-phpmyadmin -o wide
@@ -1242,7 +1220,7 @@ insert_roles.sql
 各ユーザー名にてログイン後、設定内容を確認
 ```
 
-２９.[WordPress](https://wordpress.com/ja)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２８.[WordPress](https://wordpress.com/ja)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 kubectl get svc -n wordpress -o wide
@@ -1261,7 +1239,7 @@ WPvivid（https://wordpress.org/plugins/wpvivid-backuprestore/）を導入
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 ```
 
-３０.minecraft 設定（Windows_TereTerm（VM（ubuntu-302）及び minecraft）側操作）<br>
+２９.minecraft 設定（Windows_TereTerm（VM（ubuntu-302）及び minecraft）側操作）<br>
 
 ```
 ~/Linux/platforms/scripts/minecraft_stop.sh
@@ -1314,7 +1292,7 @@ OP権限を持ったアカウントでMinecraftに入る
 必要に応じて環境設定操作（https://github.com/Gamer-Iris/Minecraft）を実施
 ```
 
-３１.crontab 設定（Windows_TereTerm（Node、VM）側操作）<br>
+３０.crontab 設定（Windows_TereTerm（Node、VM）側操作）<br>
 
 ```
 crontab -e
@@ -1357,7 +1335,7 @@ systemctl status cron.service
 sudo service cron start
 ```
 
-３２.ログローテーション設定（Windows_TereTerm（Node、VM）側操作）<br>
+３１.ログローテーション設定（Windows_TereTerm（Node、VM）側操作）<br>
 
 ```
 cd /etc/logrotate.d
@@ -1404,7 +1382,7 @@ sudo chmod 644 logrotate
 sudo logrotate -d /etc/logrotate.conf
 ```
 
-３３.バックアップ設定（Windows_Proxmox 側操作）<br>
+３２.バックアップ設定（Windows_Proxmox 側操作）<br>
 
 ```
 以下を設定
