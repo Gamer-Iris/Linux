@@ -827,16 +827,83 @@ kubeadm version
 sudo nano /etc/default/grub
 以下を設定
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-GRUB_CMDLINE_LINUX_DEFAULT="systemd.unified_cgroup_hierarchy=1"
+GRUB_CMDLINE_LINUX="systemd.unified_cgroup_hierarchy=1"
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 sudo update-grub
 sudo reboot
 ```
 
-０９.Master Node 側設定（Windows_TereTerm（VM（ubuntu-301））側操作）<br>
+０９.[Kubernetes](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/#installing-kubeadm-kubelet-and-kubectl)導入（Windows_TereTerm（VM（k8s 環境全て））側操作）<br>
 
 ```
-sudo kubeadm init --pod-network-cidr=192.168.0.0/16 --ignore-preflight-errors=Mem
+sudo ln -s /etc/apparmor.d/runc /etc/apparmor.d/disable/
+sudo apparmor_parser -R /etc/apparmor.d/runc
+sudo apt install -y apt-transport-https ca-certificates curl gpg
+LATEST_VERSION=$(curl -s https://api.github.com/repos/kubernetes/kubernetes/releases/latest | grep tag_name | cut -d '"' -f 4 | sed 's/v//g' | cut -d '.' -f 1,2)
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v${LATEST_VERSION}/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v${LATEST_VERSION}/deb/ /" | sudo tee /etc/apt/sources.list.d/kubernetes.list
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y kubeadm kubelet kubectl
+sudo apt-mark hold kubeadm kubelet kubectl
+kubeadm version
+sudo nano /etc/default/grub
+以下を設定
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+GRUB_CMDLINE_LINUX="systemd.unified_cgroup_hierarchy=1"
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+sudo update-grub
+sudo reboot
+```
+
+１０.containerd 導入（Windows_TereTerm（VM（ubuntu-301））側操作）<br>
+
+```
+cd
+LATEST_VERSION=$(curl -s https://api.github.com/repos/containerd/containerd/releases/latest | grep tag_name | cut -d '"' -f 4)
+LATEST_VERSION_WITHOUT_V=${LATEST_VERSION#v}
+wget https://github.com/containerd/containerd/releases/download/${LATEST_VERSION}/containerd-${LATEST_VERSION_WITHOUT_V}-linux-arm64.tar.gz
+sudo tar zxvf containerd-${LATEST_VERSION_WITHOUT_V}-linux-arm64.tar.gz -C /usr/local/
+sudo wget https://raw.githubusercontent.com/containerd/containerd/main/containerd.service \
+  -O /etc/systemd/system/containerd.service
+sudo systemctl daemon-reload
+sudo systemctl start containerd
+sudo systemctl enable containerd
+sudo mkdir -p /etc/containerd
+sudo touch /etc/containerd/config.toml
+sudo containerd config default | sudo tee /etc/containerd/config.toml
+sudo nano /etc/containerd/config.toml
+以下を設定
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+  ...
+  [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+    SystemdCgroup = true #デフォルトはfalse
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+```
+
+１１.runc 導入（Windows_TereTerm（VM（ubuntu-301））側操作）<br>
+
+```
+cd
+LATEST_VERSION=$(curl -s https://api.github.com/repos/opencontainers/runc/releases/latest | grep tag_name | cut -d '"' -f 4)
+wget https://github.com/opencontainers/runc/releases/download/${LATEST_VERSION}/runc.arm64
+sudo install -m 755 runc.arm64 /usr/local/sbin/runc
+cd
+LATEST_VERSION=$(curl -s https://api.github.com/repos/containernetworking/plugins/releases/latest | grep tag_name | cut -d '"' -f 4)
+wget https://github.com/containernetworking/plugins/releases/download/${LATEST_VERSION}/cni-plugins-linux-arm64-${LATEST_VERSION}.tgz
+sudo mkdir -p /opt/cni/bin
+sudo tar Cxzvf /opt/cni/bin cni-plugins-linux-arm64-${LATEST_VERSION}.tgz
+```
+
+１２.kubeadm init 設定（Windows_TereTerm（VM（ubuntu-301））側操作）<br>
+
+```
+sudo systemctl restart kubelet
+sudo systemctl restart containerd
+sudo kubeadm init \
+  --pod-network-cidr=192.168.0.0/16 \
+  --cri-socket=unix:///run/containerd/containerd.sock \
+  --ignore-preflight-errors=Mem
 以下を確認
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 Your Kubernetes control-plane has initialized successfully!
@@ -860,7 +927,14 @@ Then you can join any number of worker nodes by running the following on each as
 ★⑨コマンド
 ```
 
-１０.[calico](https://docs.tigera.io/calico/latest/getting-started/kubernetes/quickstart)導入（Windows_TereTerm（VM（ubuntu-301））側操作）<br>
+１３.flannel 導入（Windows_TereTerm（VM（ubuntu-301））側操作）<br>
+
+```
+curl -LO https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+kubectl apply -f kube-flannel.yml
+```
+
+１４.[calico](https://docs.tigera.io/calico/latest/getting-started/kubernetes/quickstart)導入（Windows_TereTerm（VM（ubuntu-301））側操作）<br>
 
 ```
 cd
@@ -871,12 +945,12 @@ kubectl patch daemonset calico-node -n kube-system --type='json' -p='[
   {"op": "add", "path": "/spec/template/spec/containers/0/env/-", "value":
   {"name": "IP_AUTODETECTION_METHOD", "value": "cidr=192.168.11.32/21"}},
   {"op": "add", "path": "/spec/template/spec/containers/0/env/-", "value":
-  {"name": "CALICO_IPV4POOL_CIDR", "value": "10.244.0.0/16"}}]'
+  {"name": "CALICO_IPV4POOL_CIDR", "value": "192.168.0.0/16"}}]'
 kubectl get pod,svc --all-namespaces -o wide
 sudo rm -r calico.yaml
 ```
 
-１１.Worker Node 側設定（Windows_TereTerm（VM（ubuntu-301 以外））側操作）<br>
+１５.Worker Node 側設定（Windows_TereTerm（VM（ubuntu-301 以外））側操作）<br>
 
 ```
 Master Nodeの.kubeをWorker Nodeへ配置
@@ -888,7 +962,7 @@ kubectl get nodes -o wide
 kubectl -n kube-system get pod -o wide
 ```
 
-１２.各ノードへのラベル付与（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
+１６.各ノードへのラベル付与（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
 
 ```
 kubectl get nodes --show-labels
@@ -899,7 +973,7 @@ kubectl label nodes ubuntu-302 labelname=ubuntu-302
 kubectl get nodes --show-labels
 ```
 
-１３.[Helm](https://github.com/helm/helm/releases)導入（Windows_TereTerm（VM（k8s 環境全て））側操作）<br>
+１７.[Helm](https://github.com/helm/helm/releases)導入（Windows_TereTerm（VM（k8s 環境全て））側操作）<br>
 
 ```
 cd ~/Linux/platforms/kubernetes
@@ -914,7 +988,7 @@ helm version --short
 sudo rm -r helm*.tar.gz
 ```
 
-１４.cifs-utils 導入（Windows_TereTerm（VM（k8s 環境全て））側操作）<br>
+１８.cifs-utils 導入（Windows_TereTerm（VM（k8s 環境全て））側操作）<br>
 
 ```
 sudo apt update && sudo apt upgrade -y
@@ -926,7 +1000,7 @@ which mount.cifs
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 ```
 
-１５.[csi-driver-smb](https://github.com/kubernetes-csi/csi-driver-smb)導入（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
+１９.[csi-driver-smb](https://github.com/kubernetes-csi/csi-driver-smb)導入（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
 
 ```
 helm repo add csi-driver-smb https://raw.githubusercontent.com/kubernetes-csi/csi-driver-smb/master/charts
@@ -937,7 +1011,7 @@ kubectl -n kube-system get pods -l app=csi-smb-controller
 kubectl -n kube-system get pods -l app=csi-smb-node
 ```
 
-１６.metallb 導入（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
+２０.metallb 導入（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
 
 ```
 helm repo add metallb https://metallb.github.io/metallb
@@ -948,8 +1022,7 @@ helm install metallb metallb/metallb -n metallb-system
 kubectl apply -f ~/Linux/platforms/kubernetes/apps/metallb/metallb-config.yml
 kubectl get pods -n metallb-system -o wide
 ```
-
-１７.CoreDNS 設定（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
+２１.CoreDNS 設定（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
 
 ```
 kubectl apply -f ~/Linux/platforms/kubernetes/apps/coredns/coredns-configmap.yml
@@ -958,7 +1031,7 @@ sudo reboot
 kubectl get pods -n kube-system -o wide
 ```
 
-１８.DNS 設定（Windows_TereTerm（VM（k8s 環境全て））側操作）<br>
+２２.DNS 設定（Windows_TereTerm（VM（k8s 環境全て））側操作）<br>
 
 ```
 cd /etc/netplan
@@ -976,7 +1049,7 @@ nslookup truenas-401.server.com
 nslookup 192.168.11.42
 ```
 
-１９.[mcrcon](https://github.com/Tiiffi/mcrcon)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２３.[mcrcon](https://github.com/Tiiffi/mcrcon)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 cd
@@ -993,7 +1066,7 @@ mcrcon バージョン番号
 rm -fr ~/mcrcon
 ```
 
-２０.[Argo CD](https://argo-cd.readthedocs.io/en/stable/)導入（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２４.[Argo CD](https://argo-cd.readthedocs.io/en/stable/)導入（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 【Argo CD導入】
@@ -1034,7 +1107,7 @@ argo.pub内容をGithubの該当リポジトリへ登録
 sudo rm -r ~/argo*
 ```
 
-２１.各 app 導入（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２５.各 app 導入（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 【namespace、storage設定】
@@ -1103,7 +1176,7 @@ argocd app sync navidrome
 argocd app sync wordpress
 ```
 
-２２.監視ツール一式設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２６.監視ツール一式設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 kubectl get serviceMonitor -n monitoring
@@ -1132,7 +1205,7 @@ grafana表示内容にてログイン
   ※grafanaはユーザー名：admin、PW：★⑫
 ```
 
-２３.[Navidrome](https://www.navidrome.org)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２７.[Navidrome](https://www.navidrome.org)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 kubectl get svc -n navidrome -o wide
@@ -1145,7 +1218,7 @@ rootユーザーにて、以下を設定
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 ```
 
-２４.DB ツール一式設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２８.DB ツール一式設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 kubectl get svc -n mariadb-phpmyadmin -o wide
@@ -1169,7 +1242,7 @@ insert_roles.sql
 各ユーザー名にてログイン後、設定内容を確認
 ```
 
-２５.[WordPress](https://wordpress.com/ja)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２９.[WordPress](https://wordpress.com/ja)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 kubectl get svc -n wordpress -o wide
@@ -1188,7 +1261,7 @@ WPvivid（https://wordpress.org/plugins/wpvivid-backuprestore/）を導入
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 ```
 
-２６.minecraft 設定（Windows_TereTerm（VM（ubuntu-302）及び minecraft）側操作）<br>
+３０.minecraft 設定（Windows_TereTerm（VM（ubuntu-302）及び minecraft）側操作）<br>
 
 ```
 ~/Linux/platforms/scripts/minecraft_stop.sh
@@ -1241,7 +1314,7 @@ OP権限を持ったアカウントでMinecraftに入る
 必要に応じて環境設定操作（https://github.com/Gamer-Iris/Minecraft）を実施
 ```
 
-２７.crontab 設定（Windows_TereTerm（Node、VM）側操作）<br>
+３１.crontab 設定（Windows_TereTerm（Node、VM）側操作）<br>
 
 ```
 crontab -e
@@ -1284,7 +1357,7 @@ systemctl status cron.service
 sudo service cron start
 ```
 
-２８.ログローテーション設定（Windows_TereTerm（Node、VM）側操作）<br>
+３２.ログローテーション設定（Windows_TereTerm（Node、VM）側操作）<br>
 
 ```
 cd /etc/logrotate.d
@@ -1331,7 +1404,7 @@ sudo chmod 644 logrotate
 sudo logrotate -d /etc/logrotate.conf
 ```
 
-２９.バックアップ設定（Windows_Proxmox 側操作）<br>
+３３.バックアップ設定（Windows_Proxmox 側操作）<br>
 
 ```
 以下を設定
