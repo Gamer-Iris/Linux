@@ -857,6 +857,7 @@ sudo nano /etc/containerd/config.toml
   [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
     SystemdCgroup = true #デフォルトはfalse
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+sudo rm -r containerd-*-linux-arm64.tar.gz
 ```
 
 １０.runc 導入（Windows_TereTerm（VM（ubuntu-301））側操作）<br>
@@ -871,6 +872,7 @@ LATEST_VERSION=$(curl -s https://api.github.com/repos/containernetworking/plugin
 wget https://github.com/containernetworking/plugins/releases/download/${LATEST_VERSION}/cni-plugins-linux-arm64-${LATEST_VERSION}.tgz
 sudo mkdir -p /opt/cni/bin
 sudo tar Cxzvf /opt/cni/bin cni-plugins-linux-arm64-${LATEST_VERSION}.tgz
+sudo rm -r runc.arm64 cni-plugins-linux-arm64-*.tgz
 ```
 
 １１.kubeadm init 設定（Windows_TereTerm（VM（ubuntu-301））側操作）<br>
@@ -905,30 +907,17 @@ Then you can join any number of worker nodes by running the following on each as
 ★⑨コマンド
 ```
 
-１２.flannel 導入（Windows_TereTerm（VM（ubuntu-301））側操作）<br>
-
-```
-curl -LO https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
-kubectl apply -f kube-flannel.yml
-```
-
-１３.[calico](https://docs.tigera.io/calico/latest/getting-started/kubernetes/quickstart)導入（Windows_TereTerm（VM（ubuntu-301））側操作）<br>
+１２.[calico](https://docs.tigera.io/calico/latest/getting-started/kubernetes/quickstart)導入（Windows_TereTerm（VM（ubuntu-301））側操作）<br>
 
 ```
 cd
 LATEST_VERSION=$(curl -s https://api.github.com/repos/projectcalico/calico/releases/latest | grep tag_name | cut -d '"' -f 4)
-wget https://raw.githubusercontent.com/projectcalico/calico/${LATEST_VERSION}/manifests/calico.yaml
-kubectl apply -f calico.yaml
-kubectl patch daemonset calico-node -n kube-system --type='json' -p='[
-  {"op": "add", "path": "/spec/template/spec/containers/0/env/-", "value":
-  {"name": "IP_AUTODETECTION_METHOD", "value": "cidr=192.168.11.32/21"}},
-  {"op": "add", "path": "/spec/template/spec/containers/0/env/-", "value":
-  {"name": "CALICO_IPV4POOL_CIDR", "value": "192.168.0.0/16"}}]'
+kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/${LATEST_VERSION}/manifests/tigera-operator.yaml
+kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.3/${LATEST_VERSION}/custom-resources.yaml
 kubectl get pod,svc --all-namespaces -o wide
-sudo rm -r calico.yaml
 ```
 
-１４.Worker Node 側設定（Windows_TereTerm（VM（ubuntu-301 以外））側操作）<br>
+１３.Worker Node 側設定（Windows_TereTerm（VM（ubuntu-301 以外））側操作）<br>
 
 ```
 Master Nodeの.kubeをWorker Nodeへ配置
@@ -940,7 +929,7 @@ kubectl get nodes -o wide
 kubectl -n kube-system get pod -o wide
 ```
 
-１５.各ノードへのラベル付与（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
+１４.各ノードへのラベル付与（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
 
 ```
 kubectl get nodes --show-labels
@@ -951,7 +940,7 @@ kubectl label nodes ubuntu-302 labelname=ubuntu-302
 kubectl get nodes --show-labels
 ```
 
-１６.[Helm](https://github.com/helm/helm/releases)導入（Windows_TereTerm（VM（k8s 環境全て））側操作）<br>
+１５.[Helm](https://github.com/helm/helm/releases)導入（Windows_TereTerm（VM（k8s 環境全て））側操作）<br>
 
 ```
 cd ~/Linux/platforms/kubernetes
@@ -966,7 +955,7 @@ helm version --short
 sudo rm -r helm*.tar.gz
 ```
 
-１７.cifs-utils 導入（Windows_TereTerm（VM（k8s 環境全て））側操作）<br>
+１６.cifs-utils 導入（Windows_TereTerm（VM（k8s 環境全て））側操作）<br>
 
 ```
 sudo apt update && sudo apt upgrade -y
@@ -978,7 +967,7 @@ which mount.cifs
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 ```
 
-１８.[csi-driver-smb](https://github.com/kubernetes-csi/csi-driver-smb)導入（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
+１７.[csi-driver-smb](https://github.com/kubernetes-csi/csi-driver-smb)導入（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
 
 ```
 helm repo add csi-driver-smb https://raw.githubusercontent.com/kubernetes-csi/csi-driver-smb/master/charts
@@ -989,7 +978,7 @@ kubectl -n kube-system get pods -l app=csi-smb-controller
 kubectl -n kube-system get pods -l app=csi-smb-node
 ```
 
-１９.metallb 導入（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
+１８.metallb 導入（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
 
 ```
 helm repo add metallb https://metallb.github.io/metallb
@@ -1000,7 +989,7 @@ helm install metallb metallb/metallb -n metallb-system
 kubectl apply -f ~/Linux/platforms/kubernetes/apps/metallb/metallb-config.yml
 kubectl get pods -n metallb-system -o wide
 ```
-２０.CoreDNS 設定（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
+１９.CoreDNS 設定（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
 
 ```
 kubectl apply -f ~/Linux/platforms/kubernetes/apps/coredns/coredns-configmap.yml
@@ -1009,7 +998,7 @@ sudo reboot
 kubectl get pods -n kube-system -o wide
 ```
 
-２１.DNS 設定（Windows_TereTerm（VM（k8s 環境全て））側操作）<br>
+２０.DNS 設定（Windows_TereTerm（VM（k8s 環境全て））側操作）<br>
 
 ```
 cd /etc/netplan
@@ -1027,7 +1016,7 @@ nslookup truenas-401.server.com
 nslookup 192.168.11.42
 ```
 
-２２.[mcrcon](https://github.com/Tiiffi/mcrcon)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２１.[mcrcon](https://github.com/Tiiffi/mcrcon)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 cd
@@ -1044,7 +1033,7 @@ mcrcon バージョン番号
 rm -fr ~/mcrcon
 ```
 
-２３.[Argo CD](https://argo-cd.readthedocs.io/en/stable/)導入（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２２.[Argo CD](https://argo-cd.readthedocs.io/en/stable/)導入（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 【Argo CD導入】
@@ -1085,7 +1074,7 @@ argo.pub内容をGithubの該当リポジトリへ登録
 sudo rm -r ~/argo*
 ```
 
-２４.各 app 導入（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２３.各 app 導入（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 【namespace、storage設定】
@@ -1154,7 +1143,7 @@ argocd app sync navidrome
 argocd app sync wordpress
 ```
 
-２５.監視ツール一式設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２４.監視ツール一式設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 kubectl get serviceMonitor -n monitoring
@@ -1183,7 +1172,7 @@ grafana表示内容にてログイン
   ※grafanaはユーザー名：admin、PW：★⑫
 ```
 
-２６.[Navidrome](https://www.navidrome.org)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２５.[Navidrome](https://www.navidrome.org)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 kubectl get svc -n navidrome -o wide
@@ -1196,7 +1185,7 @@ rootユーザーにて、以下を設定
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 ```
 
-２７.DB ツール一式設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２６.DB ツール一式設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 kubectl get svc -n mariadb-phpmyadmin -o wide
@@ -1220,7 +1209,7 @@ insert_roles.sql
 各ユーザー名にてログイン後、設定内容を確認
 ```
 
-２８.[WordPress](https://wordpress.com/ja)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２７.[WordPress](https://wordpress.com/ja)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 kubectl get svc -n wordpress -o wide
@@ -1239,7 +1228,7 @@ WPvivid（https://wordpress.org/plugins/wpvivid-backuprestore/）を導入
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 ```
 
-２９.minecraft 設定（Windows_TereTerm（VM（ubuntu-302）及び minecraft）側操作）<br>
+２８.minecraft 設定（Windows_TereTerm（VM（ubuntu-302）及び minecraft）側操作）<br>
 
 ```
 ~/Linux/platforms/scripts/minecraft_stop.sh
@@ -1292,7 +1281,7 @@ OP権限を持ったアカウントでMinecraftに入る
 必要に応じて環境設定操作（https://github.com/Gamer-Iris/Minecraft）を実施
 ```
 
-３０.crontab 設定（Windows_TereTerm（Node、VM）側操作）<br>
+２９.crontab 設定（Windows_TereTerm（Node、VM）側操作）<br>
 
 ```
 crontab -e
@@ -1335,7 +1324,7 @@ systemctl status cron.service
 sudo service cron start
 ```
 
-３１.ログローテーション設定（Windows_TereTerm（Node、VM）側操作）<br>
+３０.ログローテーション設定（Windows_TereTerm（Node、VM）側操作）<br>
 
 ```
 cd /etc/logrotate.d
@@ -1382,7 +1371,7 @@ sudo chmod 644 logrotate
 sudo logrotate -d /etc/logrotate.conf
 ```
 
-３２.バックアップ設定（Windows_Proxmox 側操作）<br>
+３１.バックアップ設定（Windows_Proxmox 側操作）<br>
 
 ```
 以下を設定
