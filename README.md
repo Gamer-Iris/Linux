@@ -913,7 +913,7 @@ Then you can join any number of worker nodes by running the following on each as
 cd
 LATEST_VERSION=$(curl -s https://api.github.com/repos/projectcalico/calico/releases/latest | grep tag_name | cut -d '"' -f 4)
 kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/${LATEST_VERSION}/manifests/tigera-operator.yaml
-kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.31.3/${LATEST_VERSION}/custom-resources.yaml
+kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/${LATEST_VERSION}/manifests/custom-resources.yaml
 kubectl get pod,svc --all-namespaces -o wide
 ```
 
@@ -989,6 +989,7 @@ helm install metallb metallb/metallb -n metallb-system
 kubectl apply -f ~/Linux/platforms/kubernetes/apps/metallb/metallb-config.yml
 kubectl get pods -n metallb-system -o wide
 ```
+
 １９.CoreDNS 設定（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
 
 ```
@@ -998,25 +999,7 @@ sudo reboot
 kubectl get pods -n kube-system -o wide
 ```
 
-２０.DNS 設定（Windows_TereTerm（VM（k8s 環境全て））側操作）<br>
-
-```
-cd /etc/netplan
-sudo nano 99-cloud-init.yaml
-以下を設定
-+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-                addresses: [10.96.0.10]
-+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-sudo netplan apply
-sudo sed -i"" -e "s/.*DNSStubListener=yes/DNSStubListener=no/" /etc/systemd/resolved.conf
-cd /etc
-sudo ln -sf ../run/systemd/resolve/resolv.conf resolv.conf
-sudo systemctl restart systemd-resolved.service
-nslookup truenas-401.server.com
-nslookup 192.168.11.42
-```
-
-２１.[mcrcon](https://github.com/Tiiffi/mcrcon)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２０.[mcrcon](https://github.com/Tiiffi/mcrcon)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 cd
@@ -1033,7 +1016,7 @@ mcrcon バージョン番号
 rm -fr ~/mcrcon
 ```
 
-２２.[Argo CD](https://argo-cd.readthedocs.io/en/stable/)導入（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２１.[Argo CD](https://argo-cd.readthedocs.io/en/stable/)導入（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 【Argo CD導入】
@@ -1062,8 +1045,14 @@ argocd表示内容にてログイン
 ssh-keygen -t ed25519 -f ./argo
 Enter
 Enter
-argo.pub内容をGithubの該当リポジトリへ登録
-「Settings」→「Repositories」→「CONNECT REPO」
+GithubのSettingsへ登録
+「右上のアイコン」→「Settings」→「SSH and GPG keys」→「New SSH key」
+以下を設定後、「Add SSH key」
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+「Title」：Argo CD
+「Key type」：Authentication Key
+「Key」：argo.pub内容
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 以下を設定後、「CONNECT」
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 「Name (mandatory for Helm)」：GitHub
@@ -1074,7 +1063,7 @@ argo.pub内容をGithubの該当リポジトリへ登録
 sudo rm -r ~/argo*
 ```
 
-２３.各 app 導入（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２２.各 app 導入（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 【namespace、storage設定】
@@ -1143,7 +1132,7 @@ argocd app sync navidrome
 argocd app sync wordpress
 ```
 
-２４.監視ツール一式設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２３.監視ツール一式設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 kubectl get serviceMonitor -n monitoring
@@ -1172,7 +1161,7 @@ grafana表示内容にてログイン
   ※grafanaはユーザー名：admin、PW：★⑫
 ```
 
-２５.[Navidrome](https://www.navidrome.org)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２４.[Navidrome](https://www.navidrome.org)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 kubectl get svc -n navidrome -o wide
@@ -1185,7 +1174,7 @@ rootユーザーにて、以下を設定
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 ```
 
-２６.DB ツール一式設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２５.DB ツール一式設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 kubectl get svc -n mariadb-phpmyadmin -o wide
@@ -1209,7 +1198,7 @@ insert_roles.sql
 各ユーザー名にてログイン後、設定内容を確認
 ```
 
-２７.[WordPress](https://wordpress.com/ja)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２６.[WordPress](https://wordpress.com/ja)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 kubectl get svc -n wordpress -o wide
@@ -1228,7 +1217,7 @@ WPvivid（https://wordpress.org/plugins/wpvivid-backuprestore/）を導入
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 ```
 
-２８.minecraft 設定（Windows_TereTerm（VM（ubuntu-302）及び minecraft）側操作）<br>
+２７.minecraft 設定（Windows_TereTerm（VM（ubuntu-302）及び minecraft）側操作）<br>
 
 ```
 ~/Linux/platforms/scripts/minecraft_stop.sh
@@ -1281,7 +1270,7 @@ OP権限を持ったアカウントでMinecraftに入る
 必要に応じて環境設定操作（https://github.com/Gamer-Iris/Minecraft）を実施
 ```
 
-２９.crontab 設定（Windows_TereTerm（Node、VM）側操作）<br>
+２８.crontab 設定（Windows_TereTerm（Node、VM）側操作）<br>
 
 ```
 crontab -e
@@ -1324,7 +1313,7 @@ systemctl status cron.service
 sudo service cron start
 ```
 
-３０.ログローテーション設定（Windows_TereTerm（Node、VM）側操作）<br>
+２９.ログローテーション設定（Windows_TereTerm（Node、VM）側操作）<br>
 
 ```
 cd /etc/logrotate.d
@@ -1371,7 +1360,7 @@ sudo chmod 644 logrotate
 sudo logrotate -d /etc/logrotate.conf
 ```
 
-３１.バックアップ設定（Windows_Proxmox 側操作）<br>
+３０.バックアップ設定（Windows_Proxmox 側操作）<br>
 
 ```
 以下を設定
