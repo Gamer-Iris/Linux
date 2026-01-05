@@ -981,16 +981,7 @@ kubectl apply -f ~/Linux/platforms/kubernetes/apps/metallb/metallb-config.yml
 kubectl get pods -n metallb-system -o wide
 ```
 
-１８.CoreDNS 設定（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
-
-```
-kubectl apply -f ~/Linux/platforms/kubernetes/apps/coredns/coredns-configmap.yml
-kubectl delete pod -n kube-system -l k8s-app=kube-dns
-sudo reboot
-kubectl get pods -n kube-system -o wide
-```
-
-１９.[mcrcon](https://github.com/Tiiffi/mcrcon)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+１８.[mcrcon](https://github.com/Tiiffi/mcrcon)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 cd
@@ -1007,7 +998,7 @@ mcrcon バージョン番号
 rm -fr ~/mcrcon
 ```
 
-２０.[Argo CD](https://argo-cd.readthedocs.io/en/stable/)導入（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+１９.[Argo CD](https://argo-cd.readthedocs.io/en/stable/)導入（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 【Argo CD導入】
@@ -1054,7 +1045,7 @@ GithubのSettingsへ登録
 sudo rm -r ~/argo*
 ```
 
-２１.各 app 導入（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２０.各 app 導入（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 【namespace、storage設定】
@@ -1123,7 +1114,7 @@ argocd app sync navidrome
 argocd app sync wordpress
 ```
 
-２２.監視ツール一式設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２１.監視ツール一式設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 kubectl get serviceMonitor -n monitoring
@@ -1152,7 +1143,7 @@ grafana表示内容にてログイン
   ※grafanaはユーザー名：admin、PW：★⑫
 ```
 
-２３.[Navidrome](https://www.navidrome.org)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２２.[Navidrome](https://www.navidrome.org)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 kubectl get svc -n navidrome -o wide
@@ -1165,7 +1156,7 @@ rootユーザーにて、以下を設定
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 ```
 
-２４.DB ツール一式設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２３.DB ツール一式設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 kubectl get svc -n mariadb-phpmyadmin -o wide
@@ -1189,7 +1180,7 @@ insert_roles.sql
 各ユーザー名にてログイン後、設定内容を確認
 ```
 
-２５.[WordPress](https://wordpress.com/ja)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２４.[WordPress](https://wordpress.com/ja)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 kubectl get svc -n wordpress -o wide
@@ -1208,7 +1199,7 @@ WPvivid（https://wordpress.org/plugins/wpvivid-backuprestore/）を導入
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 ```
 
-２６.minecraft 設定（Windows_TereTerm（VM（ubuntu-302）及び minecraft）側操作）<br>
+２５.minecraft 設定（Windows_TereTerm（VM（ubuntu-302）及び minecraft）側操作）<br>
 
 ```
 ~/Linux/platforms/scripts/minecraft_stop.sh
@@ -1261,7 +1252,7 @@ OP権限を持ったアカウントでMinecraftに入る
 必要に応じて環境設定操作（https://github.com/Gamer-Iris/Minecraft）を実施
 ```
 
-２７.crontab 設定（Windows_TereTerm（Node、VM）側操作）<br>
+２６.crontab 設定（Windows_TereTerm（Node、VM）側操作）<br>
 
 ```
 crontab -e
@@ -1304,7 +1295,7 @@ systemctl status cron.service
 sudo service cron start
 ```
 
-２８.ログローテーション設定（Windows_TereTerm（Node、VM）側操作）<br>
+２７.ログローテーション設定（Windows_TereTerm（Node、VM）側操作）<br>
 
 ```
 cd /etc/logrotate.d
@@ -1351,7 +1342,7 @@ sudo chmod 644 logrotate
 sudo logrotate -d /etc/logrotate.conf
 ```
 
-２９.バックアップ設定（Windows_Proxmox 側操作）<br>
+２８.バックアップ設定（Windows_Proxmox 側操作）<br>
 
 ```
 以下を設定
