@@ -1,0 +1,81 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns
+  namespace: kube-system
+data:
+  Corefile: |
+    .:53 {
+        errors
+        health {
+          lameduck 5s
+        }
+        hosts {
+          dns.server.com 10.96.0.10
+          mariadb.server.com 10.96.0.20
+          pve-01.server.com 192.168.11.11
+          ubuntu-101.server.com 192.168.11.12
+          ubuntu-102.server.com 192.168.11.13
+          pve-02.server.com 192.168.11.21
+          ubuntu-201.server.com 192.168.11.22
+          pve-03.server.com 192.168.11.31
+          ubuntu-301.server.com 192.168.11.32
+          ubuntu-302.server.com 192.168.11.33
+          pve-04.server.com 192.168.11.41
+          truenas-401.server.com 192.168.11.42
+          pve-05.server.com 192.168.11.51
+          windows-501.server.com 192.168.11.52
+          mx-linux.server.com 192.168.11.61
+          argo-cd.server.com 192.168.11.71
+          alertmanager.server.com 192.168.11.72
+          grafana.server.com 192.168.11.73
+          promethous.server.com 192.168.11.74
+          phpmyadmin.server.com 192.168.11.75
+          gamer-iris.server.com 192.168.11.76
+          minecraft.server.com 192.168.11.77
+          minecraft.server1.com 192.168.11.78
+          minecraft.server2.com 192.168.11.79
+          navidrome.server.com 192.168.11.80
+          10.96.0.10 dns.server.com
+          10.96.0.20 mariadb.server.com
+          192.168.11.11 pve-01.server.com
+          192.168.11.12 ubuntu-101.server.com
+          192.168.11.13 ubuntu-102.server.com
+          192.168.11.21 pve-02.server.com
+          192.168.11.22 ubuntu-201.server.com
+          192.168.11.31 pve-03.server.com
+          192.168.11.32 ubuntu-301.server.com
+          192.168.11.33 ubuntu-302.server.com
+          192.168.11.41 pve-04.server.com
+          192.168.11.42 truenas-401.server.com
+          192.168.11.51 pve-05.server.com
+          192.168.11.52 windows-501.server.com
+          192.168.11.61 mx-linux.server.com
+          192.168.11.71 argo-cd.server.com
+          192.168.11.72 alertmanager.server.com
+          192.168.11.73 grafana.server.com
+          192.168.11.74 promethous.server.com
+          192.168.11.75 phpmyadmin.server.com
+          192.168.11.76 gamer-iris.server.com
+          192.168.11.77 minecraft.server.com
+          192.168.11.78 minecraft.server1.com
+          192.168.11.79 minecraft.server2.com
+          192.168.11.80 navidrome.server.com
+          fallthrough
+        }
+        ready
+        kubernetes cluster.local in-addr.arpa ip6.arpa {
+          pods insecure
+          fallthrough in-addr.arpa ip6.arpa
+          ttl 30
+        }
+        prometheus :9153
+        forward . 1.1.1.1 8.8.8.8 {
+          prefer_udp
+          max_concurrent 1000
+        }
+        cache 30
+        loop
+        reload
+        loadbalance
+    }

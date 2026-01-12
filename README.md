@@ -129,6 +129,7 @@ sudo ufw allow 22
 sudo ufw allow 179
 sudo ufw allow 2049
 sudo ufw allow 3300
+sudo ufw allow 5473
 sudo ufw allow 6443
 sudo ufw allow 6789
 sudo ufw allow 8006
@@ -267,6 +268,7 @@ sudo ufw allow 22
 sudo ufw allow 179
 sudo ufw allow 2049
 sudo ufw allow 3300
+sudo ufw allow 5473
 sudo ufw allow 6443
 sudo ufw allow 6789
 sudo ufw allow 8006
@@ -672,6 +674,7 @@ sudo ufw allow 22
 sudo ufw allow 179
 sudo ufw allow 2049
 sudo ufw allow 3300
+sudo ufw allow 5473
 sudo ufw allow 6443
 sudo ufw allow 6789
 sudo ufw allow 8006
@@ -824,14 +827,15 @@ sudo update-grub
 sudo reboot
 ```
 
-０８.containerd 導入（Windows_TereTerm（VM（ubuntu-301））側操作）<br>
+０８.containerd 導入（Windows_TereTerm（VM（k8s 環境全て））側操作）<br>
 
 ```
 cd
+ARCH=$(uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')
 LATEST_VERSION=$(curl -s https://api.github.com/repos/containerd/containerd/releases/latest | grep tag_name | cut -d '"' -f 4)
 LATEST_VERSION_WITHOUT_V=${LATEST_VERSION#v}
-wget https://github.com/containerd/containerd/releases/download/${LATEST_VERSION}/containerd-${LATEST_VERSION_WITHOUT_V}-linux-arm64.tar.gz
-sudo tar zxvf containerd-${LATEST_VERSION_WITHOUT_V}-linux-arm64.tar.gz -C /usr/local/
+wget https://github.com/containerd/containerd/releases/download/${LATEST_VERSION}/containerd-${LATEST_VERSION_WITHOUT_V}-linux-${ARCH}.tar.gz
+sudo tar zxvf containerd-${LATEST_VERSION_WITHOUT_V}-linux-${ARCH}.tar.gz -C /usr/local/
 sudo wget https://raw.githubusercontent.com/containerd/containerd/main/containerd.service \
   -O /etc/systemd/system/containerd.service
 sudo systemctl daemon-reload
@@ -848,22 +852,23 @@ sudo nano /etc/containerd/config.toml
   [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
     SystemdCgroup = true #デフォルトはfalse
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-sudo rm -r containerd-*-linux-arm64.tar.gz
+sudo rm -r containerd-*-linux-${ARCH}.tar.gz
 ```
 
-０９.runc 導入（Windows_TereTerm（VM（ubuntu-301））側操作）<br>
+０９.runc 導入（Windows_TereTerm（VM（k8s 環境全て））側操作）<br>
 
 ```
 cd
+ARCH=$(uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')
 LATEST_VERSION=$(curl -s https://api.github.com/repos/opencontainers/runc/releases/latest | grep tag_name | cut -d '"' -f 4)
-wget https://github.com/opencontainers/runc/releases/download/${LATEST_VERSION}/runc.arm64
-sudo install -m 755 runc.arm64 /usr/local/sbin/runc
+wget https://github.com/opencontainers/runc/releases/download/${LATEST_VERSION}/runc.${ARCH}
+sudo install -m 755 runc.${ARCH} /usr/local/sbin/runc
 cd
 LATEST_VERSION=$(curl -s https://api.github.com/repos/containernetworking/plugins/releases/latest | grep tag_name | cut -d '"' -f 4)
-wget https://github.com/containernetworking/plugins/releases/download/${LATEST_VERSION}/cni-plugins-linux-arm64-${LATEST_VERSION}.tgz
+wget https://github.com/containernetworking/plugins/releases/download/${LATEST_VERSION}/cni-plugins-linux-${ARCH}-${LATEST_VERSION}.tgz
 sudo mkdir -p /opt/cni/bin
-sudo tar Cxzvf /opt/cni/bin cni-plugins-linux-arm64-${LATEST_VERSION}.tgz
-sudo rm -r runc.arm64 cni-plugins-linux-arm64-*.tgz
+sudo tar Cxzvf /opt/cni/bin cni-plugins-linux-${ARCH}-${LATEST_VERSION}.tgz
+sudo rm -r runc.${ARCH} cni-plugins-linux-${ARCH}-*.tgz
 ```
 
 １０.kubeadm init 設定（Windows_TereTerm（VM（ubuntu-301））側操作）<br>
@@ -935,9 +940,9 @@ kubectl get nodes --show-labels
 
 ```
 cd ~/Linux/platforms/kubernetes
+ARCH=$(uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')
 LATEST_VERSION=$(curl -s https://api.github.com/repos/helm/helm/releases/latest | grep tag_name | cut -d '"' -f 4 | sed 's/v//g')
-wget https://get.helm.sh/helm-v${LATEST_VERSION}-linux-amd64.tar.gz
-wget https://get.helm.sh/helm-v${LATEST_VERSION}-linux-arm64.tar.gz
+wget https://get.helm.sh/helm-v${LATEST_VERSION}-linux-${ARCH}.tar.gz
 tar xvf helm*.tar.gz
 sudo mv linux-*/helm /usr/local/bin/
 sudo chown -R $USER:$USER ~/.kube/config
@@ -981,7 +986,15 @@ kubectl apply -f ~/Linux/platforms/kubernetes/apps/metallb/metallb-config.yml
 kubectl get pods -n metallb-system -o wide
 ```
 
-１８.[mcrcon](https://github.com/Tiiffi/mcrcon)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+１８.CoreDNS 設定（Windows_TereTerm（VM（k8s 環境いずれか））側操作）<br>
+
+```
+kubectl apply -f ~/Linux/platforms/kubernetes/apps/coredns/coredns-configmap.yml
+kubectl delete pod -n kube-system -l k8s-app=kube-dns
+kubectl get pods -n kube-system -o wide
+```
+
+１９.[mcrcon](https://github.com/Tiiffi/mcrcon)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 cd
@@ -998,7 +1011,7 @@ mcrcon バージョン番号
 rm -fr ~/mcrcon
 ```
 
-１９.[Argo CD](https://argo-cd.readthedocs.io/en/stable/)導入（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２０.[Argo CD](https://argo-cd.readthedocs.io/en/stable/)導入（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 【Argo CD導入】
@@ -1027,12 +1040,11 @@ argocd表示内容にてログイン
 ssh-keygen -t ed25519 -f ./argo
 Enter
 Enter
-GithubのSettingsへ登録
-「右上のアイコン」→「Settings」→「SSH and GPG keys」→「New SSH key」
-以下を設定後、「Add SSH key」
+argo.pub内容をGithubの該当リポジトリへ登録
+「Settings」→「Deploy keys」→「Add deploy key」
+以下を設定後、「Add key」
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 「Title」：Argo CD
-「Key type」：Authentication Key
 「Key」：argo.pub内容
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 以下を設定後、「CONNECT」
@@ -1045,7 +1057,7 @@ GithubのSettingsへ登録
 sudo rm -r ~/argo*
 ```
 
-２０.各 app 導入（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２１.各 app 導入（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 【namespace、storage設定】
@@ -1114,7 +1126,7 @@ argocd app sync navidrome
 argocd app sync wordpress
 ```
 
-２１.監視ツール一式設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２２.監視ツール一式設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 kubectl get serviceMonitor -n monitoring
@@ -1143,7 +1155,7 @@ grafana表示内容にてログイン
   ※grafanaはユーザー名：admin、PW：★⑫
 ```
 
-２２.[Navidrome](https://www.navidrome.org)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２３.[Navidrome](https://www.navidrome.org)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 kubectl get svc -n navidrome -o wide
@@ -1156,7 +1168,7 @@ rootユーザーにて、以下を設定
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 ```
 
-２３.DB ツール一式設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２４.DB ツール一式設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 kubectl get svc -n mariadb-phpmyadmin -o wide
@@ -1180,7 +1192,7 @@ insert_roles.sql
 各ユーザー名にてログイン後、設定内容を確認
 ```
 
-２４.[WordPress](https://wordpress.com/ja)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
+２５.[WordPress](https://wordpress.com/ja)設定（Windows_TereTerm（VM（ubuntu-302））側操作）<br>
 
 ```
 kubectl get svc -n wordpress -o wide
@@ -1199,7 +1211,7 @@ WPvivid（https://wordpress.org/plugins/wpvivid-backuprestore/）を導入
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 ```
 
-２５.minecraft 設定（Windows_TereTerm（VM（ubuntu-302）及び minecraft）側操作）<br>
+２６.minecraft 設定（Windows_TereTerm（VM（ubuntu-302）及び minecraft）側操作）<br>
 
 ```
 ~/Linux/platforms/scripts/minecraft_stop.sh
@@ -1252,7 +1264,7 @@ OP権限を持ったアカウントでMinecraftに入る
 必要に応じて環境設定操作（https://github.com/Gamer-Iris/Minecraft）を実施
 ```
 
-２６.crontab 設定（Windows_TereTerm（Node、VM）側操作）<br>
+２７.crontab 設定（Windows_TereTerm（Node、VM）側操作）<br>
 
 ```
 crontab -e
@@ -1295,7 +1307,7 @@ systemctl status cron.service
 sudo service cron start
 ```
 
-２７.ログローテーション設定（Windows_TereTerm（Node、VM）側操作）<br>
+２８.ログローテーション設定（Windows_TereTerm（Node、VM）側操作）<br>
 
 ```
 cd /etc/logrotate.d
@@ -1342,7 +1354,7 @@ sudo chmod 644 logrotate
 sudo logrotate -d /etc/logrotate.conf
 ```
 
-２８.バックアップ設定（Windows_Proxmox 側操作）<br>
+２９.バックアップ設定（Windows_Proxmox 側操作）<br>
 
 ```
 以下を設定
