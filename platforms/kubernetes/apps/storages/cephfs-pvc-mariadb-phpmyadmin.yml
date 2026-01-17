@@ -9,4 +9,4 @@ spec:
   resources:
     requests:
       storage: 50Gi
-  storageClassName: mariadb-phpmyadmin-cephfs-storage-class
+  storageClassName: cephfs-storage-class

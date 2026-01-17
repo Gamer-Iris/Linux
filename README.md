@@ -1065,7 +1065,20 @@ ARGOCD_SERVER_ADDRESS=$(kubectl get svc argocd-server -n argocd -o jsonpath='{.s
 yes | argocd login ${ARGOCD_SERVER_ADDRESS} --username ユーザー名 --password パスワード
 kubectl apply -f ~/Linux/platforms/kubernetes/argo-cd-apps-deployment1.yml
 argocd app sync namespaces
-argocd app sync storages
+kubectl apply -f ~/Linux/platforms/kubernetes/argo-cd-apps-deployment2.yml
+argocd app sync rook-release
+cd ~
+LATEST_VERSION=$(curl -s https://api.github.com/repos/rook/rook/releases/latest | jq -r '.tag_name')
+LATEST_VERSION_WITHOUT_V=${LATEST_VERSION#v}
+LATEST_RELEASE_BRANCH="release-$(echo "${LATEST_VERSION_WITHOUT_V}" | awk -F. '{print $1"."$2}')"
+wget "https://raw.githubusercontent.com/rook/rook/${LATEST_RELEASE_BRANCH}/deploy/examples/create-external-cluster-resources.py"
+python3 create-external-cluster-resources.py \
+  --namespace rook-ceph-external \
+  --format bash \
+  --skip-monitoring-endpoint
+出力された export / kubectl コマンドをすべて実行
+wget "https://raw.githubusercontent.com/rook/rook/${LATEST_RELEASE_BRANCH}/deploy/examples/import-external-cluster.sh"
+. import-external-cluster.sh
 
 【kubeseal導入】
 LATEST_VERSION=$(curl -s https://api.github.com/repos/bitnami-labs/sealed-secrets/releases/latest | jq -r '.tag_name')
@@ -1075,7 +1088,7 @@ tar -zxvf kubeseal-*.tar.gz
 chmod +x kubeseal
 sudo mv kubeseal /usr/local/bin/
 kubeseal
-以下を確認
+以下を確認（sealed-secrets 導入前のためエラーが出るのは正常）
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 (tty detected: expecting json/yaml k8s resource in stdin)
 error: cannot get sealed secret service: services "sealed-secrets-controller" not found.
@@ -1090,10 +1103,15 @@ LATEST_VERSION=$(helm search repo sealed-secrets/sealed-secrets -o yaml | yq eva
 echo ${LATEST_VERSION}
 LATEST_VERSION=$(awk '/name: sealed-secrets/{f=1} f && /targetRevision/{print $2; f=0}' ~/Linux/platforms/kubernetes/argo-cd-apps-deployment2.yml)
 echo ${LATEST_VERSION}
-必要に応じてargo-cd-apps-deployment2.ymlを編集
+必要に応じてargo-cd-apps-deployment2.ymlを編集し、以下を再実行
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 kubectl apply -f ~/Linux/platforms/kubernetes/argo-cd-apps-deployment2.yml
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 argocd app sync sealed-secrets
 kubectl get pods -n sealed-secrets -o wide
+
+【storages 同期（CephFS SC / PVC）】
+argocd app sync storages
 
 【各secret設定】
 各secret.ymlを編集

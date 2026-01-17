@@ -9,7 +9,7 @@ spec:
   resources:
     requests:
       storage: 1Gi
-  storageClassName: minecraft-proxy-cephfs-storage-class
+  storageClassName: cephfs-storage-class
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -22,7 +22,7 @@ spec:
   resources:
     requests:
       storage: 15Gi
-  storageClassName: minecraft-server1-cephfs-storage-class
+  storageClassName: cephfs-storage-class
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -35,7 +35,7 @@ spec:
   resources:
     requests:
       storage: 275Gi
-  storageClassName: minecraft-backup1-cephfs-storage-class
+  storageClassName: cephfs-storage-class
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -48,7 +48,7 @@ spec:
   resources:
     requests:
       storage: 15Gi
-  storageClassName: minecraft-server2-cephfs-storage-class
+  storageClassName: cephfs-storage-class
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -61,4 +61,4 @@ spec:
   resources:
     requests:
       storage: 275Gi
-  storageClassName: minecraft-backup2-cephfs-storage-class
+  storageClassName: cephfs-storage-class
