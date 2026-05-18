@@ -1,0 +1,185 @@
+######################################################################################################################################################
+# ファイル   : validate.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/05/19                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# インフラ検証 workflow
+name: Infrastructure Validate
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+jobs:
+  check-secrets:
+    name: Secret placeholder check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check K8s Secret files have replace-me placeholders
+        run: bash platforms/setup/validate/check_secrets.sh
+  readme-policy:
+    name: README policy
+    runs-on: ubuntu-latest
+    needs: check-secrets
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check README safety policy
+        run: bash platforms/setup/validate/validate_readme.sh
+  python-validate:
+    name: Python syntax and inventory behavior
+    runs-on: ubuntu-latest
+    needs: check-secrets
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run Python syntax checks
+        run: bash platforms/setup/validate/validate_python.sh
+      - name: Inventory fails clearly without settings_secret.yml
+        run: |
+          set +e
+          python3 platforms/setup/inventory.sh --list 2>inventory.err
+          rc=$?
+          set -e
+          test "${rc}" -ne 0
+          grep -q "settings_secret.yml が見つかりません" inventory.err
+      - name: Install yq for inventory render test
+        run: |
+          sudo wget -qO /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+      - name: Inventory renders from template settings
+        run: |
+          cp platforms/settings/settings_secret_template.yml platforms/settings/settings_secret.yml
+          python3 platforms/setup/inventory.sh --list > inventory.json
+          python3 -m json.tool inventory.json >/dev/null
+          grep -q '"control_plane"' inventory.json
+  shell-safety:
+    name: Shell safety policy
+    runs-on: ubuntu-latest
+    needs: check-secrets
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check dangerous shell patterns
+        run: bash platforms/setup/validate/validate_shell_safety.sh
+  release-workflows:
+    name: Release workflow policy
+    runs-on: ubuntu-latest
+    needs: check-secrets
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check setup.sh release dispatch and workflow policies
+        run: bash platforms/setup/validate/validate_release_workflows.sh
+  yaml-lint:
+    name: YAML lint
+    runs-on: ubuntu-latest
+    needs:
+      [
+        check-secrets,
+        readme-policy,
+        python-validate,
+        shell-safety,
+        release-workflows,
+      ]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install yamllint
+        run: pip install yamllint
+      - name: Run yamllint on Kubernetes manifests
+        run: |
+          yamllint -c .config/yamllint.yml \
+            platforms/kubernetes/ \
+            platforms/settings/
+      - name: Run yamllint on Ansible files
+        run: |
+          yamllint -c .config/yamllint.yml \
+            platforms/setup/site.yml \
+            platforms/setup/group_vars/ \
+            platforms/setup/roles/
+  kubeconform:
+    name: Kubernetes manifest validation
+    runs-on: ubuntu-latest
+    needs: yaml-lint
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install kubeconform
+        run: |
+          curl -sSL \
+            "https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz" \
+            | tar -xz -C /usr/local/bin/ kubeconform
+          kubeconform -v
+      - name: Run kubeconform on Kubernetes manifests
+        run: |
+          find platforms/kubernetes/apps -type f \( -name "*.yml" -o -name "*.yaml" \) \
+            ! -name "values.yaml" \
+            ! -name "values.yml" \
+            ! -path "*/settings/*" \
+          | sort \
+          | xargs kubeconform \
+              --ignore-missing-schemas \
+              --kubernetes-version 1.31.0 \
+              --summary \
+              --output tap
+  k8s-policy:
+    name: Kubernetes policy checks
+    runs-on: ubuntu-latest
+    needs: yaml-lint
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install PyYAML
+        run: pip install pyyaml
+      - name: Run Kubernetes policy checks
+        run: python3 platforms/setup/validate/validate_k8s_policy.py
+  ansible-syntax:
+    name: Ansible syntax check
+    runs-on: ubuntu-latest
+    needs: yaml-lint
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Ansible
+        run: pip install ansible
+      - name: Install Ansible collections
+        run: ansible-galaxy collection install -r platforms/setup/requirements.yml
+      - name: Run ansible-playbook syntax-check
+        run: |
+          cat > /tmp/linux-inventory.ini <<'EOF'
+          [control_plane]
+          control-plane-01 ansible_connection=local
+          [workers]
+          worker-01 ansible_connection=local
+          [proxmox]
+          proxmox-01 ansible_connection=local
+          EOF
+          ansible-playbook --syntax-check \
+            -i /tmp/linux-inventory.ini \
+            -e settings_file="${PWD}/platforms/settings/settings_secret_template.yml" \
+            platforms/setup/site.yml
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run ShellCheck on scripts
+        run: |
+          find platforms/scripts -name "*.sh" -print0 \
+          | xargs -0 shellcheck --severity=warning --shell=bash || true
+          shellcheck --severity=warning --shell=bash \
+            platforms/setup/setup.sh \
+            platforms/setup/lib/*.sh \
+            platforms/setup/validate/*.sh || true
+  ansible-lint:
+    name: Ansible lint
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install ansible-lint
+        run: pip install ansible-lint
+      - name: Run ansible-lint on site.yml
+        run: |
+          ansible-lint platforms/setup/site.yml \
+            --config-file .config/ansible-lint.yml

@@ -1,0 +1,498 @@
+######################################################################################################################################################
+# ファイル   : minecraft-maintenance.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/05/19                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# Minecraft 手動メンテナンス
+name: Minecraft Maintenance
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "実行する Minecraft メンテナンス作業"
+        required: true
+        type: choice
+        options:
+          - resource-refresh
+          - backup-export
+          - restore
+          - bluemap-reload
+          - pvc-emergency-start
+          - pvc-emergency-finish
+        default: resource-refresh
+      restore_server:
+        description: "restore 実行時のみ使用する復元対象 server"
+        required: false
+        type: choice
+        options:
+          - server1
+          - server2
+        default: server1
+      restore_remote_path:
+        description: "restore 元の rclone path（例: minecraft-backup:bucket/server1/snapshot）"
+        required: false
+        type: string
+        default: ""
+      confirm_restore:
+        description: "破壊的な restore を許可する場合のみ true にする"
+        required: false
+        type: choice
+        options:
+          - "false"
+          - "true"
+        default: "false"
+      confirm_pvc_maintenance:
+        description: "PVC 緊急メンテ時のみ「I understand PVC contents can be modified or deleted」を入力"
+        required: false
+        type: string
+        default: ""
+jobs:
+  run:
+    runs-on: [self-hosted]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run selected Minecraft maintenance task
+        run: |
+          set -euo pipefail
+          run_cronjob_once() {
+            CRONJOB="$1"
+            TIMEOUT="$2"
+            JOB_NAME="${CRONJOB}-${GITHUB_RUN_ID}"
+            kubectl -n minecraft create job "${JOB_NAME}" --from="cronjob/${CRONJOB}"
+            if kubectl -n minecraft wait --for=condition=complete "job/${JOB_NAME}" --timeout="${TIMEOUT}"; then
+              kubectl -n minecraft logs "job/${JOB_NAME}"
+            else
+              kubectl -n minecraft logs "job/${JOB_NAME}" || true
+              echo "メンテナンス Job が失敗しました: ${JOB_NAME}" >&2
+              exit 1
+            fi
+          }
+          scale_minecraft() {
+            case "$1" in
+              0) stop_minecraft ;;
+              1) start_minecraft ;;
+              *) echo "未対応の Minecraft replica 数です: $1" >&2; exit 1 ;;
+            esac
+          }
+          append_script_log_summary() {
+            NAME="$1"
+            LOG_FILE="$2"
+            RC="$3"
+            {
+              echo "### ${NAME}"
+              echo ""
+              echo "終了コード: ${RC}"
+              echo ""
+              echo "\`\`\`"
+              tail -n 160 "${LOG_FILE}" || true
+              echo "\`\`\`"
+              echo ""
+            } >> "${GITHUB_STEP_SUMMARY}"
+          }
+          run_minecraft_script() {
+            NAME="$1"
+            SCRIPT_PATH="$2"
+            LOG_FILE="${RUNNER_TEMP:-/tmp}/${NAME}-${GITHUB_RUN_ID}.log"
+            set +e
+            bash "${SCRIPT_PATH}" 2>&1 | tee "${LOG_FILE}"
+            RC="${PIPESTATUS[0]}"
+            set -e
+            append_script_log_summary "${NAME}" "${LOG_FILE}" "${RC}"
+            return "${RC}"
+          }
+          stop_minecraft() {
+            if [ -f "${GITHUB_WORKSPACE}/platforms/scripts/minecraft/minecraft_stop.sh" ]; then
+              run_minecraft_script minecraft_stop "${GITHUB_WORKSPACE}/platforms/scripts/minecraft/minecraft_stop.sh"
+            else
+              echo "minecraft_stop.sh が見つかりません。PVC emergency maintenance には既存の停止 script が必要です。" >&2
+              exit 1
+            fi
+          }
+          start_minecraft() {
+            if [ -f "${GITHUB_WORKSPACE}/platforms/scripts/minecraft/minecraft_start.sh" ]; then
+              run_minecraft_script minecraft_start "${GITHUB_WORKSPACE}/platforms/scripts/minecraft/minecraft_start.sh"
+            else
+              echo "minecraft_start.sh が見つかりません。PVC emergency maintenance には既存の起動 script が必要です。" >&2
+              exit 1
+            fi
+          }
+          wait_pods_removed() {
+            for APP in minecraft-proxy minecraft-server1 minecraft-server2; do
+              while [ "$(kubectl -n minecraft get pod -l "app=${APP}" --no-headers 2>/dev/null | wc -l)" != "0" ]; do
+                echo "${APP} の Pod 終了を待っています"
+                sleep 5
+              done
+            done
+          }
+          wait_minecraft_ready() {
+            kubectl -n minecraft rollout status deployment/minecraft-proxy --timeout=300s
+            kubectl -n minecraft rollout status deployment/minecraft-server1 --timeout=300s
+            kubectl -n minecraft rollout status deployment/minecraft-server2 --timeout=300s
+            kubectl -n minecraft wait pod \
+              -l "app in (minecraft-proxy,minecraft-server1,minecraft-server2)" \
+              --for=condition=Ready \
+              --timeout=300s
+          }
+          assert_pvc_maintenance_confirmed() {
+            if [ "${{ github.event.inputs.confirm_pvc_maintenance }}" != "I understand PVC contents can be modified or deleted" ]; then
+              echo "PVC 内容を変更・削除できる危険操作です。confirm_pvc_maintenance には正確に次の文字列を入力してください: I understand PVC contents can be modified or deleted" >&2
+              exit 1
+            fi
+          }
+          ensure_pvc_maintenance_pod_absent() {
+            if kubectl -n minecraft get pod minecraft-pvc-emergency-maintenance >/dev/null 2>&1; then
+              echo "minecraft-pvc-emergency-maintenance は既に存在します。先に pvc-emergency-finish を実行してください。" >&2
+              exit 1
+            fi
+          }
+          create_pvc_maintenance_pod() {
+            CREATED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+            CREATED_AT_LABEL="$(date -u '+%Y%m%dT%H%M%SZ')"
+            cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: minecraft-pvc-emergency-maintenance
+            namespace: minecraft
+            labels:
+              app: minecraft-pvc-emergency-maintenance
+              maintenance.gamer-iris.com/type: pvc-emergency
+              maintenance.gamer-iris.com/github-run-id: "${GITHUB_RUN_ID}"
+              maintenance.gamer-iris.com/created-at: "${CREATED_AT_LABEL}"
+            annotations:
+              maintenance.gamer-iris.com/type: pvc-emergency
+              maintenance.gamer-iris.com/github-run-id: "${GITHUB_RUN_ID}"
+              maintenance.gamer-iris.com/github-actor: "${GITHUB_ACTOR}"
+              maintenance.gamer-iris.com/created-at: "${CREATED_AT}"
+              maintenance.gamer-iris.com/namespace: minecraft
+              maintenance.gamer-iris.com/pvc-names: "minecraft-proxy-pvc,minecraft-server1-pvc,minecraft-server2-pvc"
+              maintenance.gamer-iris.com/purpose: "Emergency RW maintenance for Minecraft CephFS PVC contents."
+              maintenance.gamer-iris.com/finish-task: "Run minecraft-maintenance.yml task pvc-emergency-finish after maintenance."
+          spec:
+            restartPolicy: Never
+            nodeSelector:
+              kubernetes.io/hostname: ubuntu-101
+            tolerations:
+              - key: node-role.kubernetes.io/control-plane
+                operator: Exists
+                effect: NoSchedule
+              - key: node-role.kubernetes.io/master
+                operator: Exists
+                effect: NoSchedule
+            automountServiceAccountToken: false
+            securityContext:
+              seccompProfile:
+                type: RuntimeDefault
+            containers:
+              - name: maintenance
+                image: ubuntu:latest
+                imagePullPolicy: Always
+                resources:
+                  requests:
+                    cpu: 50m
+                    memory: 128Mi
+                  limits:
+                    cpu: 500m
+                    memory: 512Mi
+                securityContext:
+                  runAsUser: 0
+                  runAsGroup: 0
+                  allowPrivilegeEscalation: false
+                  readOnlyRootFilesystem: true
+                command:
+                  - /bin/sh
+                  - -ec
+                args:
+                  - |
+                    echo "Minecraft PVC emergency maintenance Pod の準備が完了しました。"
+                    echo "mount 済み path:"
+                    echo "  /mnt/cephfs/minecraft-proxy"
+                    echo "  /mnt/cephfs/minecraft-server1"
+                    echo "  /mnt/cephfs/minecraft-server2"
+                    sleep infinity
+                volumeMounts:
+                  - name: tmp
+                    mountPath: /tmp
+                  - name: minecraft-proxy
+                    mountPath: /mnt/cephfs/minecraft-proxy
+                  - name: minecraft-server1
+                    mountPath: /mnt/cephfs/minecraft-server1
+                  - name: minecraft-server2
+                    mountPath: /mnt/cephfs/minecraft-server2
+            volumes:
+              - name: tmp
+                emptyDir: {}
+              - name: minecraft-proxy
+                persistentVolumeClaim:
+                  claimName: minecraft-proxy-pvc
+              - name: minecraft-server1
+                persistentVolumeClaim:
+                  claimName: minecraft-server1-pvc
+              - name: minecraft-server2
+                persistentVolumeClaim:
+                  claimName: minecraft-server2-pvc
+          EOF
+          }
+          assert_backup_secret_configured() {
+            REMOTE_PATH="$(kubectl -n minecraft get secret minecraft-backup-secret -o jsonpath='{.data.RCLONE_REMOTE_PATH}' | base64 -d)"
+            RCLONE_CONFIG="$(kubectl -n minecraft get secret minecraft-backup-secret -o jsonpath='{.data.rclone\.conf}' | base64 -d)"
+            case "${REMOTE_PATH:-}" in
+              ""|*replace-me*) echo "RCLONE_REMOTE_PATH が未設定です。minecraft-backup-secret を確認してください。" >&2; exit 1 ;;
+            esac
+            if echo "${RCLONE_CONFIG}" | grep -q 'replace-me'; then
+              echo "rclone.conf が未設定です。minecraft-backup-secret を確認してください。" >&2
+              exit 1
+            fi
+          }
+          case "${{ github.event.inputs.task }}" in
+            resource-refresh)
+              run_cronjob_once minecraft-resource-refresh 1200s
+              ;;
+            backup-export)
+              assert_backup_secret_configured
+              run_cronjob_once minecraft-backup-export 4200s
+              ;;
+            bluemap-reload)
+              run_cronjob_once minecraft-rcon-bluemap-reload 180s
+              ;;
+            pvc-emergency-start)
+              assert_pvc_maintenance_confirmed
+              ensure_pvc_maintenance_pod_absent
+              PVC_MAINTENANCE_STARTED=0
+              cleanup() {
+                if [ "${PVC_MAINTENANCE_STARTED}" != "1" ]; then
+                  kubectl -n minecraft delete pod minecraft-pvc-emergency-maintenance --ignore-not-found=true >/dev/null 2>&1 || true
+                  start_minecraft >/dev/null 2>&1 || true
+                fi
+              }
+              trap cleanup EXIT
+              stop_minecraft
+              wait_pods_removed
+              create_pvc_maintenance_pod
+              kubectl -n minecraft wait pod minecraft-pvc-emergency-maintenance --for=condition=Ready --timeout=300s
+              PVC_MAINTENANCE_STARTED=1
+              echo "メンテナンス Pod の準備が完了しました。接続: kubectl -n minecraft exec -it minecraft-pvc-emergency-maintenance -- /bin/bash"
+              echo "メンテナンス完了後は必ず pvc-emergency-finish を実行してください。"
+              {
+                echo "## Minecraft PVC emergency maintenance"
+                echo ""
+                echo "メンテナンス Pod は ubuntu-101 上で準備完了です。"
+                echo ""
+                echo "接続コマンド:"
+                echo "\`\`\`"
+                echo "kubectl -n minecraft exec -it minecraft-pvc-emergency-maintenance -- /bin/bash"
+                echo "\`\`\`"
+                echo ""
+                echo "mount 済み path:"
+                echo "- /mnt/cephfs/minecraft-proxy"
+                echo "- /mnt/cephfs/minecraft-server1"
+                echo "- /mnt/cephfs/minecraft-server2"
+                echo ""
+                echo "**メンテナンス完了後は必ず task \`pvc-emergency-finish\` を実行してください。**"
+              } >> "${GITHUB_STEP_SUMMARY}"
+              ;;
+            pvc-emergency-finish)
+              assert_pvc_maintenance_confirmed
+              cleanup() {
+                start_minecraft >/dev/null 2>&1 || true
+              }
+              trap cleanup EXIT
+              kubectl -n minecraft delete pod minecraft-pvc-emergency-maintenance --ignore-not-found=true --wait=true
+              start_minecraft
+              wait_minecraft_ready
+              {
+                echo "## Minecraft PVC emergency maintenance finished"
+                echo ""
+                echo "メンテナンス Pod を削除し、Minecraft deployment を起動しました。"
+                echo ""
+                echo "minecraft-proxy / minecraft-server1 / minecraft-server2 の Ready 確認が完了しました。"
+              } >> "${GITHUB_STEP_SUMMARY}"
+              ;;
+            restore)
+              if [ "${{ github.event.inputs.confirm_restore }}" != "true" ]; then
+                echo "restore は破壊的操作です。実行する場合は confirm_restore=true を選択してください。" >&2
+                exit 1
+              fi
+              if [ -z "${{ github.event.inputs.restore_remote_path }}" ]; then
+                echo "restore には restore_remote_path が必要です。" >&2
+                exit 1
+              fi
+              assert_backup_secret_configured
+              RESTORE_SERVER="${{ github.event.inputs.restore_server }}"
+              RESTORE_REMOTE_PATH="${{ github.event.inputs.restore_remote_path }}"
+              RESTORE_JOB="minecraft-restore-${RESTORE_SERVER}-${GITHUB_RUN_ID}"
+              RESTORE_JOB_SUCCEEDED=0
+              cleanup() {
+                if [ "${RESTORE_JOB_SUCCEEDED}" = "1" ]; then
+                  kubectl -n minecraft delete job "${RESTORE_JOB}" --ignore-not-found=true >/dev/null 2>&1 || true
+                fi
+                scale_minecraft 1 >/dev/null 2>&1 || true
+              }
+              trap cleanup EXIT
+              scale_minecraft 0
+              wait_pods_removed
+              cat <<EOF | kubectl apply -f -
+              apiVersion: batch/v1
+              kind: Job
+              metadata:
+                name: ${RESTORE_JOB}
+                namespace: minecraft
+              spec:
+                backoffLimit: 0
+                template:
+                  spec:
+                    restartPolicy: Never
+                    containers:
+                      - name: restore
+                        image: rclone/rclone:latest
+                        command:
+                          - /bin/sh
+                          - -ec
+                        args:
+                          - |
+                            if (set -o pipefail) 2>/dev/null; then
+                              set -euo pipefail
+                            else
+                              set -eu
+                            fi
+                            validate_restore_relative_path() {
+                              REL_TO_CHECK="$1"
+                              if [ -z "\$(printf '%s' "\${REL_TO_CHECK}" | tr -d '[:space:]')" ]; then
+                                echo "restore path が空、または空白のみのため危険です。" >&2
+                                exit 1
+                              fi
+                              if printf '%s' "\${REL_TO_CHECK}" | LC_ALL=C grep -q '[[:cntrl:]]'; then
+                                echo "restore path に制御文字が含まれているため危険です。" >&2
+                                exit 1
+                              fi
+                              case "\${REL_TO_CHECK}" in
+                                ""|/*|*//*|../*|*/../*|*..|*..\\*|*..*)
+                                  echo "危険な restore relative path です: \${REL_TO_CHECK}" >&2
+                                  exit 1
+                                  ;;
+                              esac
+                            }
+                            RESTORE_SERVER="${RESTORE_SERVER}"
+                            RESTORE_REMOTE_PATH="${RESTORE_REMOTE_PATH}"
+                            case "\${RESTORE_REMOTE_PATH:-}" in
+                              ""|*replace-me*) echo "RESTORE_REMOTE_PATH が未設定です。" >&2; exit 1 ;;
+                            esac
+                            if grep -q 'replace-me' /config/rclone/rclone.conf; then
+                              echo "rclone.conf が未設定です。" >&2
+                              exit 1
+                            fi
+                            case "\${RESTORE_SERVER}" in
+                              server1) TARGET_DIR=/minecraft/server1 ;;
+                              server2) TARGET_DIR=/minecraft/server2 ;;
+                              *) echo "RESTORE_SERVER が不正です: \${RESTORE_SERVER}" >&2; exit 1 ;;
+                            esac
+                            STAGE_DIR=/restore-stage
+                            case "\${TARGET_DIR}" in
+                              /minecraft/server1|/minecraft/server2) ;;
+                              *) echo "危険な TARGET_DIR です: \${TARGET_DIR}" >&2; exit 1 ;;
+                            esac
+                            case "\${STAGE_DIR}" in
+                              /restore-stage) ;;
+                              *) echo "危険な STAGE_DIR です: \${STAGE_DIR}" >&2; exit 1 ;;
+                            esac
+                            mkdir -p "\${STAGE_DIR}" "\${TARGET_DIR}"
+                            rclone copy "\${RESTORE_REMOTE_PATH}" "\${STAGE_DIR}" --config /config/rclone/rclone.conf --checksum --transfers 4
+                            for DIR in \
+                              "\${TARGET_DIR}"/[0-9]*.[0-9]*.[0-9]* \
+                              "\${TARGET_DIR}"/[0-9]*.[0-9]*.[0-9]*_nether \
+                              "\${TARGET_DIR}"/[0-9]*.[0-9]*.[0-9]*_the_end \
+                              "\${TARGET_DIR}/resource" \
+                              "\${TARGET_DIR}/resource_nether" \
+                              "\${TARGET_DIR}/resource_the_end" \
+                              "\${TARGET_DIR}/spawn"; do
+                              [ -d "\${DIR}" ] || continue
+                              case "\${DIR}" in "\${TARGET_DIR}/"*) ;; *) echo "危険な restore cleanup dir です: \${DIR}" >&2; exit 1 ;; esac
+                              find "\${DIR}" -mindepth 1 \( -name 'paper-world.yml' -o -name '*.lock' \) -prune -o -exec rm -rf -- {} +
+                            done
+                            for NAME in "\${STAGE_DIR}"/*; do
+                              [ -d "\${NAME}" ] || continue
+                              BASE_NAME="\$(basename "\${NAME}")"
+                              case "\${BASE_NAME}" in
+                                resource|resource_nether|resource_the_end|spawn|[0-9]*.[0-9]*.[0-9]*|[0-9]*.[0-9]*.[0-9]*_nether|[0-9]*.[0-9]*.[0-9]*_the_end)
+                                  validate_restore_relative_path "\${BASE_NAME}"
+                                  mkdir -p "\${TARGET_DIR}/\${BASE_NAME}"
+                                  cp -a "\${NAME}/." "\${TARGET_DIR}/\${BASE_NAME}/"
+                                  find "\${TARGET_DIR}/\${BASE_NAME}" \( -name '*.lock' -o -name 'paper-world.yml' \) -delete
+                                  ;;
+                              esac
+                            done
+                            for REL in \
+                              plugins/Chunky/tasks \
+                              plugins/Multiverse-Inventories/groups \
+                              plugins/Multiverse-Inventories/players \
+                              plugins/Multiverse-Inventories/worlds \
+                              plugins/WorldEdit/.archive-unpack/5f7cd289 \
+                              plugins/WorldEdit/.archive-unpack/56b76b46 \
+                              plugins/WorldEdit/sessions \
+                              plugins/WorldGuard/cache \
+                              plugins/WorldGuard/worlds; do
+                              [ -d "\${STAGE_DIR}/\${REL}" ] || continue
+                              validate_restore_relative_path "\${REL}"
+                              RESTORE_DEST="\${TARGET_DIR}/\${REL}"
+                              case "\${RESTORE_DEST}" in "\${TARGET_DIR}/"*) ;; *) echo "危険な restore destination です: \${RESTORE_DEST}" >&2; exit 1 ;; esac
+                              rm -rf -- "\${RESTORE_DEST:?}"
+                              mkdir -p "\$(dirname -- "\${RESTORE_DEST}")"
+                              cp -a "\${STAGE_DIR}/\${REL}" "\${RESTORE_DEST}"
+                            done
+                            for REL in \
+                              plugins/Multiverse-Core/worlds.yml \
+                              plugins/Multiverse-Inventories/groups.yml \
+                              plugins/Multiverse-NetherPortals/config.yml \
+                              plugins/Multiverse-Portals/portals.yml \
+                              ops.json \
+                              whitelist.json; do
+                              [ -f "\${STAGE_DIR}/\${REL}" ] || continue
+                              validate_restore_relative_path "\${REL}"
+                              RESTORE_DEST="\${TARGET_DIR}/\${REL}"
+                              case "\${RESTORE_DEST}" in "\${TARGET_DIR}/"*) ;; *) echo "危険な restore file destination です: \${RESTORE_DEST}" >&2; exit 1 ;; esac
+                              mkdir -p "\$(dirname -- "\${RESTORE_DEST}")"
+                              cp -a "\${STAGE_DIR}/\${REL}" "\${RESTORE_DEST}"
+                            done
+                        volumeMounts:
+                          - name: rclone-config
+                            mountPath: /config/rclone
+                            readOnly: true
+                          - name: minecraft-server1
+                            mountPath: /minecraft/server1
+                          - name: minecraft-server2
+                            mountPath: /minecraft/server2
+                          - name: restore-stage
+                            mountPath: /restore-stage
+                    volumes:
+                      - name: rclone-config
+                        secret:
+                          secretName: minecraft-backup-secret
+                          items:
+                            - key: rclone.conf
+                              path: rclone.conf
+                      - name: minecraft-server1
+                        persistentVolumeClaim:
+                          claimName: minecraft-server1-pvc
+                      - name: minecraft-server2
+                        persistentVolumeClaim:
+                          claimName: minecraft-server2-pvc
+                      - name: restore-stage
+                        emptyDir: {}
+          EOF
+              if kubectl -n minecraft wait --for=condition=complete "job/${RESTORE_JOB}" --timeout=3600s; then
+                kubectl -n minecraft logs "job/${RESTORE_JOB}"
+                RESTORE_JOB_SUCCEEDED=1
+              else
+                kubectl -n minecraft logs "job/${RESTORE_JOB}" || true
+                echo "Restore Job が失敗しました: ${RESTORE_JOB}" >&2
+                exit 1
+              fi
+              ;;
+            *)
+              echo "不明なメンテナンス task です: ${{ github.event.inputs.task }}" >&2
+              exit 1
+              ;;
+          esac

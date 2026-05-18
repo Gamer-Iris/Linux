@@ -1,0 +1,85 @@
+######################################################################################################################################################
+# ファイル   : minecraft-rcon-cronjobs.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/05/19                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+---
+# Minecraft RCON CronJob 設定
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: minecraft-rcon-bluemap-reload
+  namespace: minecraft
+spec:
+  schedule: "0 6,18 * * *"
+  suspend: false
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: rcon
+              image: itzg/minecraft-server:java25
+              command:
+                - /bin/sh
+                - -ec
+              args:
+                - |
+                  rcon-cli --host minecraft-server1.minecraft.svc.cluster.local --port 25575 --password "${RCON_PASSWORD_SERVER1}" bluemap reload
+                  rcon-cli --host minecraft-server2.minecraft.svc.cluster.local --port 25575 --password "${RCON_PASSWORD_SERVER2}" bluemap reload
+              env:
+                - name: RCON_PASSWORD_SERVER1
+                  valueFrom:
+                    secretKeyRef:
+                      name: minecraft-secret
+                      key: RCON_PASSWORD_SERVER1
+                - name: RCON_PASSWORD_SERVER2
+                  valueFrom:
+                    secretKeyRef:
+                      name: minecraft-secret
+                      key: RCON_PASSWORD_SERVER2
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: minecraft-rcon-greetmate-reload
+  namespace: minecraft
+spec:
+  schedule: "0 0 * * *"
+  suspend: true
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: rcon
+              image: itzg/minecraft-server:java25
+              command:
+                - /bin/sh
+                - -ec
+              args:
+                - |
+                  rcon-cli --host minecraft-server1.minecraft.svc.cluster.local --port 25575 --password "${RCON_PASSWORD_SERVER1}" plugman reload greetmate
+                  rcon-cli --host minecraft-server2.minecraft.svc.cluster.local --port 25575 --password "${RCON_PASSWORD_SERVER2}" plugman reload greetmate
+              env:
+                - name: RCON_PASSWORD_SERVER1
+                  valueFrom:
+                    secretKeyRef:
+                      name: minecraft-secret
+                      key: RCON_PASSWORD_SERVER1
+                - name: RCON_PASSWORD_SERVER2
+                  valueFrom:
+                    secretKeyRef:
+                      name: minecraft-secret
+                      key: RCON_PASSWORD_SERVER2

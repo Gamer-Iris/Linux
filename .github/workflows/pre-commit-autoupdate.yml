@@ -1,0 +1,63 @@
+######################################################################################################################################################
+# ファイル   : pre-commit-autoupdate.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/05/19                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# pre-commit hook 自動更新 PR 作成
+name: Pre-commit Autoupdate
+on:
+  schedule:
+    - cron: "0 19 * * 0"
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  autoupdate:
+    name: Autoupdate hooks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+      - name: Install pre-commit
+        run: python -m pip install pre-commit
+      - name: Update hook revisions
+        run: pre-commit autoupdate -c .pre-commit-config.yml
+      - name: Check for hook revision changes
+        id: changes
+        run: |
+          if git diff --quiet -- .pre-commit-config.yml; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run validators
+        id: validators
+        if: steps.changes.outputs.changed == 'true'
+        continue-on-error: true
+        env:
+          SKIP: no-commit-to-branch
+        run: pre-commit run -c .pre-commit-config.yml --all-files
+      - name: Create pull request
+        if: steps.changes.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          branch: chore/pre-commit-autoupdate
+          base: main
+          commit-message: "chore(pre-commit): autoupdate hooks"
+          title: "chore(pre-commit): autoupdate hooks"
+          body: |
+            `pre-commit autoupdate` により pre-commit hook revision を更新しました。
+
+            CI が失敗した場合は、validator の変更内容と repository 側の指摘を確認して修正してください。
+          delete-branch: true
+      - name: Validator 失敗時に workflow を失敗させる
+        if: steps.changes.outputs.changed == 'true' && steps.validators.outcome == 'failure'
+        run: exit 1

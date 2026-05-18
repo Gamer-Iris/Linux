@@ -1,0 +1,94 @@
+######################################################################################################################################################
+# ファイル   : main.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/05/19                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# Worker ノード参加処理
+- name: CP[0] の kubeconfig パスを解決
+  ansible.builtin.set_fact:
+    _cp0_kubeconfig: >-
+      {{
+        (hostvars[groups['control_plane'][0]]['setup_user_home']
+          if hostvars[groups['control_plane'][0]]['setup_user_home'] is defined
+          else '/home/' + hostvars[groups['control_plane'][0]]['ansible_user'])
+      }}/.kube/config
+- name: kubeadm join 済みか確認
+  ansible.builtin.stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: _worker_joined
+- name: kubeadm join コマンドを CP[0] で生成（未 join のみ）
+  ansible.builtin.command: kubeadm token create --print-join-command
+  environment:
+    KUBECONFIG: "{{ _cp0_kubeconfig }}"
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  register: _join_command
+  changed_when: false
+  when:
+    - not ansible_check_mode
+    - not _worker_joined.stat.exists
+- name: kubeadm join を実行
+  ansible.builtin.command: "{{ _join_command.stdout }}"
+  when:
+    - not ansible_check_mode
+    - not _worker_joined.stat.exists
+- name: kubelet が起動していることを確認（新規 join 後のみ）
+  ansible.builtin.service:
+    name: kubelet
+    state: started
+  when:
+    - not ansible_check_mode
+    - not _worker_joined.stat.exists
+- name: worker ノードが Ready になるまで CP[0] から確認
+  ansible.builtin.shell: |
+    kubectl wait node/{{ ansible_facts['nodename'] }} \
+      --for=condition=Ready \
+      --timeout={{ node_ready_timeout }}s
+  environment:
+    KUBECONFIG: "{{ _cp0_kubeconfig }}"
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  become: false
+  changed_when: false
+  register: _node_ready
+  retries: 3
+  delay: 20
+  until: _node_ready.rc == 0
+  when: not ansible_check_mode
+- name: CP[0] の admin.conf が存在することを確認
+  ansible.builtin.stat:
+    path: /etc/kubernetes/admin.conf
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  register: _cp0_admin_conf
+  when: not ansible_check_mode
+- name: CP[0] の admin.conf が見つからない場合は停止
+  ansible.builtin.fail:
+    msg: "control-plane の /etc/kubernetes/admin.conf が見つかりません。kubeadm init が完了しているか確認してください。"
+  when:
+    - not ansible_check_mode
+    - not _cp0_admin_conf.stat.exists
+- name: CP[0] の admin.conf を取得
+  ansible.builtin.slurp:
+    src: /etc/kubernetes/admin.conf
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  register: _cp0_admin_conf_content
+  no_log: true
+  when: not ansible_check_mode
+- name: worker の .kube ディレクトリを作成
+  ansible.builtin.file:
+    path: "{{ setup_user_home }}/.kube"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0755"
+  when: not ansible_check_mode
+- name: worker へ kubeconfig を配布
+  ansible.builtin.copy:
+    content: "{{ _cp0_admin_conf_content.content | b64decode }}"
+    dest: "{{ setup_user_home }}/.kube/config"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0600"
+  no_log: true
+  when: not ansible_check_mode

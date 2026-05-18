@@ -1,0 +1,108 @@
+######################################################################################################################################################
+# ファイル   : minecraft-resource-refresh-cronjob.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/05/19                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# Minecraft resource 更新 CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: minecraft-resource-refresh
+  namespace: minecraft
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  schedule: "0 2 * * 2"
+  timeZone: Asia/Tokyo
+  suspend: false
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          serviceAccountName: minecraft-maintenance
+          restartPolicy: Never
+          containers:
+            - name: controller
+              image: bitnami/kubectl:latest
+              command:
+                - /bin/sh
+                - -ec
+              args:
+                - |
+                  RESOURCE_JOB="minecraft-resource-refresh-worker-$(date +%s)"
+                  RESOURCE_JOB_SUCCEEDED=0
+                  scale_minecraft() {
+                    kubectl -n minecraft scale deployment minecraft-proxy minecraft-server1 minecraft-server2 --replicas="$1"
+                  }
+                  wait_pods_removed() {
+                    for APP in minecraft-proxy minecraft-server1 minecraft-server2; do
+                      while [ "$(kubectl -n minecraft get pod -l "app=${APP}" --no-headers 2>/dev/null | wc -l)" != "0" ]; do
+                        echo "Waiting for ${APP} pods to terminate"
+                        sleep 5
+                      done
+                    done
+                  }
+                  cleanup() {
+                    if [ "${RESOURCE_JOB_SUCCEEDED}" = "1" ]; then
+                      kubectl -n minecraft delete job "${RESOURCE_JOB}" --ignore-not-found=true >/dev/null 2>&1 || true
+                    fi
+                    scale_minecraft 1 >/dev/null 2>&1 || true
+                  }
+                  trap cleanup EXIT
+                  scale_minecraft 0
+                  wait_pods_removed
+                  cat <<EOF | kubectl apply -f -
+                  apiVersion: batch/v1
+                  kind: Job
+                  metadata:
+                    name: ${RESOURCE_JOB}
+                    namespace: minecraft
+                  spec:
+                    backoffLimit: 0
+                    template:
+                      spec:
+                        restartPolicy: Never
+                        containers:
+                          - name: refresh
+                            image: alpine:latest
+                            command:
+                              - /bin/sh
+                              - -ec
+                            args:
+                              - |
+                                for SERVER in server1 server2; do
+                                  BASE="/minecraft/${SERVER}"
+                                  rm -rf "\${BASE}/resource" "\${BASE}/resource_nether" "\${BASE}/resource_the_end"
+                                done
+                                tar -xzf /minecraft/server1/server1_resources_backup.tgz -C /minecraft/server1/
+                                tar -xzf /minecraft/server2/server2_resources_backup.tgz -C /minecraft/server2/
+                                rm -rf /minecraft/server1/server1_resources_backup /minecraft/server2/server2_resources_backup
+                                find /minecraft/server1/logs /minecraft/server2/logs -name '????-??-??-*.log.gz' -mtime +14 -delete 2>/dev/null || true
+                            volumeMounts:
+                              - name: minecraft-server1
+                                mountPath: /minecraft/server1
+                              - name: minecraft-server2
+                                mountPath: /minecraft/server2
+                        volumes:
+                          - name: minecraft-server1
+                            persistentVolumeClaim:
+                              claimName: minecraft-server1-pvc
+                          - name: minecraft-server2
+                            persistentVolumeClaim:
+                              claimName: minecraft-server2-pvc
+                  EOF
+                  if kubectl -n minecraft wait --for=condition=complete "job/${RESOURCE_JOB}" --timeout=900s; then
+                    kubectl -n minecraft logs "job/${RESOURCE_JOB}"
+                    RESOURCE_JOB_SUCCEEDED=1
+                  else
+                    kubectl -n minecraft logs "job/${RESOURCE_JOB}" || true
+                    echo "Resource refresh worker job failed: ${RESOURCE_JOB}" >&2
+                    exit 1
+                  fi

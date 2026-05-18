@@ -1,0 +1,41 @@
+######################################################################################################################################################
+# ファイル   : discord-alertmanager-config.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/05/19                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# Discord 通知設定
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: discord-routing
+  namespace: monitoring
+  labels:
+    app: kube-prometheus-stack
+    release: monitoring
+spec:
+  route:
+    receiver: discord-critical
+    matchers:
+      - name: severity
+        value: critical
+        matchType: "="
+    groupWait: 1m
+    groupInterval: 5m
+    repeatInterval: 4h
+  receivers:
+    - name: discord-critical
+      discordConfigs:
+        - apiURL:
+            name: alertmanager-discord-secret
+            key: webhook_url
+          title: "[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}"
+          message: |-
+            {{ range .Alerts -}}
+            **{{ .Labels.severity | toUpper }}** | ns: `{{ .Labels.namespace }}`
+            {{ .Annotations.summary }}
+            {{ .Annotations.description }}
+            {{ end }}
+          sendResolved: true

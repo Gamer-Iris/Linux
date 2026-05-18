@@ -1,0 +1,40 @@
+######################################################################################################################################################
+# ファイル   : cloudflare-deployment.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/05/19                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# Cloudflare Tunnel 設定
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflare
+  namespace: cloudflare
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cloudflare
+  template:
+    metadata:
+      labels:
+        app: cloudflare
+    spec:
+      containers:
+        - name: cloudflare
+          image: cloudflare/cloudflared:latest
+          imagePullPolicy: Always
+          args:
+            - "tunnel"
+            - "--no-autoupdate"
+            - "run"
+            - "--token"
+            - "$(CLOUDFLARE_TOKEN)"
+          env:
+            - name: CLOUDFLARE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cloudflare-secret
+                  key: CLOUDFLARE_TOKEN

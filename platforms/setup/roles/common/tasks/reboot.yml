@@ -1,0 +1,24 @@
+######################################################################################################################################################
+# ファイル   : reboot.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/05/19                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# 必要時 reboot 処理
+- name: handlers を flush
+  ansible.builtin.meta: flush_handlers
+- name: containerd が起動していることを確認
+  when: not ansible_check_mode
+  ansible.builtin.service:
+    name: containerd
+    state: started
+- name: 変更があった場合のみ再起動
+  when:
+    - not ansible_check_mode
+    - _common_needs_reboot | default(false)
+  ansible.builtin.reboot:
+    reboot_timeout: "{{ reboot_timeout }}"
+    post_reboot_delay: "{{ post_reboot_delay }}"
+    test_command: kubeadm version

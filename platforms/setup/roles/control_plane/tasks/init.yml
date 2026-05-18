@@ -1,0 +1,120 @@
+######################################################################################################################################################
+# ファイル   : init.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/05/19                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# Kubernetes 初期化
+- name: kubeadm 初期化済みか確認（CP[0] のみ）
+  ansible.builtin.stat:
+    path: /etc/kubernetes/admin.conf
+  register: _kubeadm_init_done
+  when: inventory_hostname == groups['control_plane'][0]
+- name: kubeadm 設定ファイルを生成（CP[0] のみ、未初期化時）
+  ansible.builtin.template:
+    src: kubeadm_config.yaml.j2
+    dest: /tmp/kubeadm_config.yaml
+    mode: "0644"
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - not _kubeadm_init_done.stat.exists
+- name: kubeadm init を実行（CP[0] のみ、未初期化時）
+  ansible.builtin.command: kubeadm init --config /tmp/kubeadm_config.yaml
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - not _kubeadm_init_done.stat.exists
+- name: .kube ディレクトリを作成
+  ansible.builtin.file:
+    path: "{{ setup_user_home }}/.kube"
+    state: directory
+    mode: "0755"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - not ansible_check_mode
+- name: admin.conf を ansible_user の kubeconfig としてコピー
+  ansible.builtin.copy:
+    src: /etc/kubernetes/admin.conf
+    dest: "{{ setup_user_home }}/.kube/config"
+    remote_src: true
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0600"
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - not ansible_check_mode
+- name: GitHub REST API version を解決
+  ansible.builtin.include_tasks: github_api_version.yml
+  when: inventory_hostname == groups['control_plane'][0]
+- name: Calico 最新 release tag を GitHub API から取得（CP[0] のみ）
+  check_mode: false
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/projectcalico/calico/releases/latest
+    headers:
+      Accept: application/vnd.github+json
+      X-GitHub-Api-Version: "{{ _resolved_github_api_version }}"
+  register: _calico_release
+  when: inventory_hostname == groups['control_plane'][0]
+- name: 解決した Calico version をログ出力（CP[0] のみ）
+  ansible.builtin.debug:
+    msg: "Calico install version: {{ _calico_release.json.tag_name }} を適用します"
+  when: inventory_hostname == groups['control_plane'][0]
+- name: Calico CNI を適用（CP[0] のみ）
+  ansible.builtin.command: >
+    kubectl apply -f
+    "https://raw.githubusercontent.com/projectcalico/calico/{{ _calico_release.json.tag_name }}/manifests/calico.yaml"
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  become: false
+  when: inventory_hostname == groups['control_plane'][0]
+  register: _calico_apply
+  changed_when: >
+    'created' in _calico_apply.stdout or
+    'configured' in _calico_apply.stdout
+- name: control plane ノードが Ready になるまで待機（CP[0] のみ）
+  ansible.builtin.shell: |
+    kubectl wait node \
+      --for=condition=Ready \
+      --all \
+      --timeout={{ node_ready_timeout }}s
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  become: false
+  when: inventory_hostname == groups['control_plane'][0]
+  changed_when: false
+  register: _node_ready
+  retries: 3
+  delay: 30
+  until: _node_ready.rc == 0
+- name: kubeadm join コマンドを生成（CP[0] のみ）
+  ansible.builtin.command: kubeadm token create --print-join-command
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _join_command_result
+  changed_when: false
+  when: inventory_hostname == groups['control_plane'][0]
+- name: join コマンドを CP[0] の hostvars に保存（workers Play が参照）
+  ansible.builtin.set_fact:
+    kubeadm_join_command: "{{ _join_command_result.stdout }}"
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - _join_command_result.stdout is defined
+- name: GitHub Webhooks / Actions / self-hosted runner を設定（有効時のみ）
+  ansible.builtin.include_tasks: github_integration.yml
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - github.enabled | default(false) | bool
+    - not ansible_check_mode
+    - setup_mode | default('') != 'secrets'
+
+- name: GitHub 連携設定をスキップしたことを表示
+  ansible.builtin.debug:
+    msg: "GitHub integration は github.enabled=false のためスキップします"
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - not (github.enabled | default(false) | bool)
+    - not ansible_check_mode
+    - setup_mode | default('') != 'secrets'

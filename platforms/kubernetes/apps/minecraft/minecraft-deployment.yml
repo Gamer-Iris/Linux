@@ -1,0 +1,292 @@
+######################################################################################################################################################
+# ファイル   : minecraft-deployment.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/05/19                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# Minecraft server Deployment 設定
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minecraft-server1
+  namespace: minecraft
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: minecraft-server1
+  template:
+    metadata:
+      labels:
+        app: minecraft-server1
+    spec:
+      terminationGracePeriodSeconds: 120
+      volumes:
+        - name: minecraft-server1-volumes
+          persistentVolumeClaim:
+            claimName: minecraft-server1-pvc
+        - name: minecraft-backup1-volumes
+          persistentVolumeClaim:
+            claimName: minecraft-backup1-pvc
+      containers:
+        - name: minecraft-server1
+          image: itzg/minecraft-server:java25
+          env:
+            - name: TYPE
+              value: PAPER
+            - name: EULA
+              value: "TRUE"
+            - name: LEVEL
+              value: "26.1.2"
+            - name: VERSION
+              value: "26.1.2"
+            - name: DIFFICULTY
+              value: "hard"
+            - name: ENFORCE_SECURE_PROFILE
+              value: "FALSE"
+            - name: MAX_PLAYERS
+              value: "10"
+            - name: MAX_TICK_TIME
+              value: "-1"
+            - name: MODE
+              value: "survival"
+            - name: MOTD
+              value: "MC-Kuvernetes-1"
+            - name: ONLINE_MODE
+              value: "FALSE"
+            - name: ENABLE_WHITELIST
+              value: "TRUE"
+            - name: SPAWN_PROTECTION
+              value: "0"
+            - name: SERVER_NAME
+              value: "minecraft.server1.com"
+            - name: TZ
+              value: "Asia/Tokyo"
+            - name: MEMORY
+              value: "12G"
+            - name: ENABLE_RCON
+              value: "true"
+            - name: RCON_PORT
+              value: "25575"
+            - name: RCON_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minecraft-secret
+                  key: RCON_PASSWORD_SERVER1
+            - name: MINECRAFT_DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: minecraft-secret
+                  key: MINECRAFT_DB_URL1
+            - name: MINECRAFT_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: minecraft-secret
+                  key: MINECRAFT_DB_USERNAME1
+            - name: MINECRAFT_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minecraft-secret
+                  key: MINECRAFT_DB_PASSWORD1
+          resources:
+            limits:
+              memory: "12Gi"
+          volumeMounts:
+            - name: minecraft-server1-volumes
+              mountPath: /data
+        - name: minecraft-backup-1
+          image: itzg/mc-backup:latest
+          securityContext:
+            runAsUser: 1000
+          env:
+            - name: INITIAL_DELAY
+              value: "120"
+            - name: BACKUP_INTERVAL
+              value: "6h"
+            - name: PRUNE_BACKUPS_DAYS
+              value: "7"
+            - name: TZ
+              value: "Asia/Tokyo"
+            - name: RCON_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minecraft-secret
+                  key: RCON_PASSWORD_SERVER1
+          volumeMounts:
+            - name: minecraft-server1-volumes
+              mountPath: /data
+              readOnly: true
+            - name: minecraft-backup1-volumes
+              mountPath: /backups
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minecraft-server2
+  namespace: minecraft
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: minecraft-server2
+  template:
+    metadata:
+      labels:
+        app: minecraft-server2
+    spec:
+      terminationGracePeriodSeconds: 120
+      volumes:
+        - name: minecraft-server2-volumes
+          persistentVolumeClaim:
+            claimName: minecraft-server2-pvc
+        - name: minecraft-backup2-volumes
+          persistentVolumeClaim:
+            claimName: minecraft-backup2-pvc
+      containers:
+        - name: minecraft-server2
+          image: itzg/minecraft-server:java25
+          env:
+            - name: TYPE
+              value: PAPER
+            - name: EULA
+              value: "TRUE"
+            - name: LEVEL
+              value: "26.1.2"
+            - name: VERSION
+              value: "26.1.2"
+            - name: DIFFICULTY
+              value: "hard"
+            - name: ENFORCE_SECURE_PROFILE
+              value: "FALSE"
+            - name: MAX_PLAYERS
+              value: "10"
+            - name: MAX_TICK_TIME
+              value: "-1"
+            - name: MODE
+              value: "survival"
+            - name: MOTD
+              value: "MC-Kuvernetes-2"
+            - name: ONLINE_MODE
+              value: "FALSE"
+            - name: ENABLE_WHITELIST
+              value: "TRUE"
+            - name: SPAWN_PROTECTION
+              value: "0"
+            - name: SERVER_NAME
+              value: "minecraft.server2.com"
+            - name: TZ
+              value: "Asia/Tokyo"
+            - name: MEMORY
+              value: "12G"
+            - name: ENABLE_RCON
+              value: "true"
+            - name: RCON_PORT
+              value: "25575"
+            - name: RCON_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minecraft-secret
+                  key: RCON_PASSWORD_SERVER2
+            - name: MINECRAFT_DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: minecraft-secret
+                  key: MINECRAFT_DB_URL2
+            - name: MINECRAFT_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: minecraft-secret
+                  key: MINECRAFT_DB_USERNAME2
+            - name: MINECRAFT_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minecraft-secret
+                  key: MINECRAFT_DB_PASSWORD2
+          resources:
+            limits:
+              memory: "12Gi"
+          volumeMounts:
+            - name: minecraft-server2-volumes
+              mountPath: /data
+        - name: minecraft-backup-2
+          image: itzg/mc-backup:latest
+          securityContext:
+            runAsUser: 1000
+          env:
+            - name: INITIAL_DELAY
+              value: "120"
+            - name: BACKUP_INTERVAL
+              value: "6h"
+            - name: PRUNE_BACKUPS_DAYS
+              value: "7"
+            - name: TZ
+              value: "Asia/Tokyo"
+            - name: RCON_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minecraft-secret
+                  key: RCON_PASSWORD_SERVER2
+          volumeMounts:
+            - name: minecraft-server2-volumes
+              mountPath: /data
+              readOnly: true
+            - name: minecraft-backup2-volumes
+              mountPath: /backups
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minecraft-server1
+  namespace: minecraft
+  labels:
+    app: minecraft-server1
+spec:
+  type: LoadBalancer
+  loadBalancerIP: 192.168.11.78
+  ports:
+    - name: bluemap-port
+      port: 8100
+      protocol: TCP
+      targetPort: 8100
+    - name: minecraft-port
+      port: 25565
+      protocol: TCP
+      targetPort: 25565
+    - name: minecraft-rcon
+      port: 25575
+      protocol: TCP
+      targetPort: 25575
+  selector:
+    app: minecraft-server1
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minecraft-server2
+  namespace: minecraft
+  labels:
+    app: minecraft-server2
+spec:
+  type: LoadBalancer
+  loadBalancerIP: 192.168.11.79
+  ports:
+    - name: bluemap-port
+      port: 8100
+      protocol: TCP
+      targetPort: 8100
+    - name: minecraft-port
+      port: 25565
+      protocol: TCP
+      targetPort: 25565
+    - name: minecraft-rcon
+      port: 25575
+      protocol: TCP
+      targetPort: 25575
+  selector:
+    app: minecraft-server2

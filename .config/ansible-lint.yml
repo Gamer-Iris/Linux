@@ -1,0 +1,27 @@
+######################################################################################################################################################
+# ファイル   : ansible-lint.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/05/19                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# Ansible lint 設定
+exclude_paths:
+  - .git/
+  - platforms/setup/logs/
+  - platforms/applications/
+warn_list:
+  - name[missing]
+  - name[template]
+  - yaml[truthy]
+skip_list:
+  - fqcn[action-core]
+  - no-changed-when
+  - command-instead-of-module
+  - command-instead-of-shell
+  - name[casing]
+  - var-naming[no-role-prefix]
+  - yaml[line-length]
+  - yaml[trailing-spaces]
+profile: basic

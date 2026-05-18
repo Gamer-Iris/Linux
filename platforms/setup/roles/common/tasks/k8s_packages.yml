@@ -1,0 +1,149 @@
+######################################################################################################################################################
+# ファイル   : k8s_packages.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/05/19                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# Kubernetes package 設定
+- name: swap の有効状態を確認
+  ansible.builtin.command: swapon --show
+  register: _swap_status
+  changed_when: false
+  failed_when: false
+- name: swap を即時無効化
+  ansible.builtin.command: swapoff -a
+  when: _swap_status.stdout | length > 0
+- name: /etc/fstab の swap 行をコメントアウト
+  ansible.builtin.replace:
+    path: /etc/fstab
+    regexp: '^([^#\n].*?\s+swap\s+.*)$'
+    replace: '# \1'
+- name: kernel modules 設定ファイルを配置
+  ansible.builtin.template:
+    src: k8s_modules.conf.j2
+    dest: /etc/modules-load.d/k8s.conf
+    mode: "0644"
+  register: _modules_conf
+- name: br_netfilter を即時ロード
+  ansible.builtin.command: modprobe br_netfilter
+  changed_when: false
+- name: overlay を即時ロード
+  ansible.builtin.command: modprobe overlay
+  changed_when: false
+- name: k8s 用 sysctl を設定
+  ansible.builtin.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/k8s.conf
+    state: present
+    reload: true
+  loop:
+    - { name: net.bridge.bridge-nf-call-iptables, value: "1" }
+    - { name: net.bridge.bridge-nf-call-ip6tables, value: "1" }
+    - { name: net.ipv4.ip_forward, value: "1" }
+  register: _sysctl_result
+- name: /etc/apt/keyrings ディレクトリを作成
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+- name: Docker apt リポジトリキーを取得
+  ansible.builtin.shell: |
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+      | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    chmod a+r /etc/apt/keyrings/docker.gpg
+  args:
+    creates: /etc/apt/keyrings/docker.gpg
+- name: Docker apt リポジトリを追加
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch={{ deb_arch }} signed-by=/etc/apt/keyrings/docker.gpg]
+      https://download.docker.com/linux/ubuntu {{ ansible_facts['distribution_release'] }} stable
+    state: present
+    filename: docker
+- name: containerd.io をインストール
+  when: not ansible_check_mode
+  ansible.builtin.apt:
+    name: containerd.io
+    state: present
+    update_cache: true
+  notify: restart_containerd
+- name: containerd.io をバージョン固定（apt-mark hold）
+  when: not ansible_check_mode
+  ansible.builtin.dpkg_selections:
+    name: containerd.io
+    selection: hold
+- name: containerd デフォルト設定を生成して SystemdCgroup を有効化
+  when: not ansible_check_mode
+  ansible.builtin.shell: |
+    containerd config default \
+      | sed 's/SystemdCgroup = false/SystemdCgroup = true/' \
+      > /tmp/containerd_config_patched.toml
+  changed_when: false
+- name: containerd 設定ファイルに反映（内容変更時のみ）
+  when: not ansible_check_mode
+  ansible.builtin.copy:
+    src: /tmp/containerd_config_patched.toml
+    dest: /etc/containerd/config.toml
+    remote_src: true
+    mode: "0644"
+  register: _containerd_config
+  notify: restart_containerd
+- name: Kubernetes 最新 stable minor channel を取得
+  check_mode: false
+  ansible.builtin.uri:
+    url: https://dl.k8s.io/release/stable.txt
+    return_content: true
+  register: _k8s_stable_txt
+- name: "kubernetes_channel を動的設定（例: v1.33.1 → 1.33）"
+  ansible.builtin.set_fact:
+    kubernetes_channel: "{{ _k8s_stable_txt.content | trim | regex_replace('^v(\\d+\\.\\d+).*$', '\\1') }}"
+- name: 解決した kubernetes_channel をログ出力
+  ansible.builtin.debug:
+    msg: "kubernetes_channel resolved: {{ kubernetes_channel }}"
+- name: Kubernetes apt リポジトリキーを取得
+  ansible.builtin.shell: |
+    curl -fsSL "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_channel }}/deb/Release.key" \
+      | gpg --dearmor -o "{{ kubernetes_apt_keyring }}"
+    chmod 644 "{{ kubernetes_apt_keyring }}"
+  args:
+    creates: "{{ kubernetes_apt_keyring }}"
+- name: Kubernetes apt リポジトリを追加
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by={{ kubernetes_apt_keyring }}]
+      https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_channel }}/deb/ /
+    state: present
+    filename: kubernetes
+- name: kubeadm / kubelet / kubectl をインストール
+  when: not ansible_check_mode
+  ansible.builtin.apt:
+    name:
+      - kubeadm
+      - kubelet
+      - kubectl
+    state: present
+    update_cache: true
+- name: kubeadm / kubelet / kubectl をバージョン固定（apt-mark hold）
+  when: not ansible_check_mode
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop:
+    - kubeadm
+    - kubelet
+    - kubectl
+- name: kubelet を enable（start は kubeadm init/join が担う）
+  when: not ansible_check_mode
+  ansible.builtin.service:
+    name: kubelet
+    enabled: true
+- name: reboot 要否を判定
+  ansible.builtin.set_fact:
+    _common_needs_reboot: >-
+      {{
+        (_modules_conf is changed) or
+        (_sysctl_result is changed)
+      }}

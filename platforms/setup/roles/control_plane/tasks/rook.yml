@@ -1,0 +1,368 @@
+######################################################################################################################################################
+# ファイル   : rook.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/05/19                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# Rook 外部 Ceph 接続
+- name: rook_env_file 変数が設定されているか確認
+  ansible.builtin.fail:
+    msg: >
+      rook_env_file が設定されていません。
+      setup.sh は rook-ceph-env.sh が存在する場合のみ rook_env_file を設定します。
+      README.md の「Rook external cluster import」に従い Proxmox 上で create-external-cluster-resources.py を実行し、
+      出力を platforms/setup/rook-ceph-env.sh として保存してから再実行してください。
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - rook_env_file is not defined or (rook_env_file | length) == 0
+- name: rook-ceph-env.sh が存在することを確認
+  ansible.builtin.stat:
+    path: "{{ rook_env_file }}"
+  register: _rook_env_stat
+  when: inventory_hostname == groups['control_plane'][0]
+- name: rook-ceph-env.sh ファイルが見つからない場合は停止
+  ansible.builtin.fail:
+    msg: >
+      rook-ceph-env.sh が見つかりません: {{ rook_env_file }}
+      README.md の「Rook external cluster import」に従い Proxmox 上で create-external-cluster-resources.py を実行し、
+      出力を {{ rook_env_file }} として保存してから再実行してください。
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - not _rook_env_stat.stat.exists
+- name: rook-ceph-external namespace が存在するまで待機
+  ansible.builtin.shell: |
+    kubectl get namespace {{ rook_external_namespace }} --no-headers 2>/dev/null | wc -l
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _rook_ext_ns
+  changed_when: false
+  until: _rook_ext_ns.stdout | int > 0
+  retries: 12
+  delay: 15
+  when: inventory_hostname == groups['control_plane'][0]
+- name: Ceph 接続資材（Secret 2種 + ConfigMap）の存在確認（import 済み判定）
+  ansible.builtin.shell: |
+    SECRETS=$(kubectl -n {{ rook_external_namespace }} get secret \
+      rook-csi-cephfs-node \
+      rook-csi-cephfs-provisioner \
+      --no-headers 2>/dev/null | wc -l)
+    CONFIGMAP=$(kubectl -n {{ rook_external_namespace }} get configmap \
+      rook-ceph-mon-endpoints \
+      --no-headers 2>/dev/null | wc -l)
+    echo $((SECRETS + CONFIGMAP))
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _ceph_resources_count
+  changed_when: false
+  when: inventory_hostname == groups['control_plane'][0]
+- name: import 作業ディレクトリを作成
+  ansible.builtin.file:
+    path: "{{ rook_work_dir }}"
+    state: directory
+    mode: "0755"
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - _ceph_resources_count.stdout | int < 3
+- name: rook operator の targetRevision を ArgoCD Application から取得
+  ansible.builtin.shell: |
+    kubectl -n argocd get application rook-release \
+      -o jsonpath='{.spec.source.targetRevision}' 2>/dev/null
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _rook_target_revision
+  changed_when: false
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - _ceph_resources_count.stdout | int < 3
+- name: targetRevision が取得できない場合は停止
+  ansible.builtin.fail:
+    msg: >
+      rook-release ArgoCD Application から targetRevision を取得できませんでした。
+      (apps_base) が正常完了し argo-cd-apps-deployment2.yml が適用されていることを確認してください。
+      kubectl -n argocd get application rook-release で Application の状態を確認してください。
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - _ceph_resources_count.stdout | int < 3
+    - _rook_target_revision.stdout | trim | length == 0
+- name: import-external-cluster.sh をダウンロード
+  ansible.builtin.shell: |
+    set -eo pipefail
+    TARGET_REV="{{ _rook_target_revision.stdout | trim }}"
+    if [ "${TARGET_REV}" = "*" ]; then
+      helm repo add rook-release https://charts.rook.io/release 2>&1 | grep -v 'already exists' || true
+      helm repo update rook-release 2>&1
+      ROOK_VERSION=$(helm search repo rook-release/rook-ceph -o json 2>/dev/null \
+        | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['version'] if d else '')")
+      if [ -z "${ROOK_VERSION}" ]; then
+        echo "ERROR: Helm repo から rook-ceph latest version を取得できませんでした" >&2
+        exit 1
+      fi
+      echo "rook-ceph version resolved from Helm repo: ${ROOK_VERSION}"
+    else
+      ROOK_VERSION="${TARGET_REV}"
+    fi
+    RELEASE_BRANCH="release-$(echo "${ROOK_VERSION}" | grep -oE '[0-9]+\.[0-9]+' | head -1)"
+    if [ "${RELEASE_BRANCH}" = "release-" ]; then
+      echo "ERROR: ROOK_VERSION '${ROOK_VERSION}' から release branch を抽出できませんでした" >&2
+      exit 1
+    fi
+    echo "rook import script は ${RELEASE_BRANCH} を使用します"
+    SCRIPT_URL="https://raw.githubusercontent.com/rook/rook/${RELEASE_BRANCH}/deploy/examples/import-external-cluster.sh"
+    wget -q -O {{ rook_work_dir }}/import-external-cluster.sh "${SCRIPT_URL}"
+    chmod +x {{ rook_work_dir }}/import-external-cluster.sh
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - _ceph_resources_count.stdout | int < 3
+- name: import-external-cluster.sh を実行
+  ansible.builtin.shell: |
+    set -eo pipefail
+    source {{ rook_env_file }}
+    bash {{ rook_work_dir }}/import-external-cluster.sh
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - _ceph_resources_count.stdout | int < 3
+  register: _import_result
+- name: Rook external CephCluster を適用
+  ansible.builtin.command: >
+    kubectl apply -f {{ repo_root }}/platforms/kubernetes/apps/storages/rook-ceph-external-cluster.yml
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _rook_external_cluster_apply
+  changed_when: >
+    'created' in _rook_external_cluster_apply.stdout or
+    'configured' in _rook_external_cluster_apply.stdout
+  when: inventory_hostname == groups['control_plane'][0]
+- name: Rook external CephCluster が接続されるまで待機
+  ansible.builtin.shell: |
+    kubectl -n {{ rook_external_namespace }} get cephcluster rook-ceph-external \
+      -o jsonpath='{.status.phase}'
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _rook_external_cluster_phase
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: _rook_external_cluster_phase.stdout == 'Connected'
+  when: inventory_hostname == groups['control_plane'][0]
+- name: StorageClass が存在するまで待機（ArgoCD storages Application が作成）
+  ansible.builtin.shell: |
+    kubectl get storageclass cephfs-storage-class --no-headers 2>/dev/null | wc -l
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _sc_count
+  changed_when: false
+  until: _sc_count.stdout | int > 0
+  retries: 15
+  delay: 20
+  when: inventory_hostname == groups['control_plane'][0]
+- name: csi-cephfsplugin-provisioner を再起動して external cluster 設定を反映
+  ansible.builtin.command: >
+    kubectl -n {{ rook_namespace }} rollout restart deployment/csi-cephfsplugin-provisioner
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _csi_cephfs_provisioner_restart
+  changed_when: "'restarted' in _csi_cephfs_provisioner_restart.stdout"
+  when: inventory_hostname == groups['control_plane'][0]
+- name: CephFS CSIDriver が作成されるまで待機
+  ansible.builtin.shell: |
+    kubectl get csidriver rook-ceph.cephfs.csi.ceph.com --no-headers
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  changed_when: false
+  register: _cephfs_csidriver_ready
+  retries: 20
+  delay: 15
+  until: _cephfs_csidriver_ready.rc == 0
+  when: inventory_hostname == groups['control_plane'][0]
+- name: csi-cephfsplugin DaemonSet が Available になるまで待機
+  ansible.builtin.shell: |
+    kubectl -n {{ rook_namespace }} rollout status daemonset/csi-cephfsplugin \
+      --timeout={{ pod_ready_timeout }}s
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  changed_when: false
+  register: _csi_cephfsplugin_ready
+  retries: 5
+  delay: 30
+  until: _csi_cephfsplugin_ready.rc == 0
+  when: inventory_hostname == groups['control_plane'][0]
+- name: csi-cephfsplugin-provisioner Deployment が Available になるまで待機
+  ansible.builtin.shell: |
+    kubectl -n {{ rook_namespace }} rollout status deployment/csi-cephfsplugin-provisioner \
+      --timeout={{ pod_ready_timeout }}s
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  changed_when: false
+  register: _csi_cephfs_provisioner_ready
+  retries: 5
+  delay: 30
+  until: _csi_cephfs_provisioner_ready.rc == 0
+  when: inventory_hostname == groups['control_plane'][0]
+- name: 全 node に CephFS CSI driver が登録されるまで待機
+  ansible.builtin.shell: |
+    kubectl get nodes -o json | python3 -c '
+    import json, subprocess, sys
+
+    driver = "rook-ceph.cephfs.csi.ceph.com"
+    nodes = [item["metadata"]["name"] for item in json.load(sys.stdin).get("items", [])]
+    missing = []
+    for node in nodes:
+      out = subprocess.run(
+        ["kubectl", "get", "csinode", node, "-o", "json"],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+      )
+      if out.returncode != 0:
+        missing.append(node + ":CSINodeMissing")
+        continue
+      drivers = json.loads(out.stdout).get("spec", {}).get("drivers") or []
+      if driver not in [d.get("name") for d in drivers]:
+        missing.append(node)
+    if missing:
+      print("missing " + driver + ": " + ", ".join(missing))
+      sys.exit(1)
+    print("all nodes have " + driver)
+    '
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _cephfs_csinode_ready
+  changed_when: false
+  failed_when: false
+  retries: 30
+  delay: 10
+  until: _cephfs_csinode_ready.rc == 0
+  when: inventory_hostname == groups['control_plane'][0]
+- name: Ceph CSI 診断ログを取得（CSINode 未登録時）
+  ansible.builtin.shell: |
+    set +e
+    echo "### kubectl get csidriver"
+    kubectl get csidriver
+    echo
+    echo "### kubectl get csinode"
+    kubectl get csinode -o wide
+    echo
+    echo "### kubectl -n rook-ceph get pods -o wide"
+    kubectl -n rook-ceph get pods -o wide
+    echo
+    echo "### kubectl -n rook-ceph get ds"
+    kubectl -n rook-ceph get ds
+    echo
+    echo "### kubectl get pvc -A"
+    kubectl get pvc -A
+    echo
+    echo "### kubectl get events -A --sort-by=.lastTimestamp | tail -100"
+    kubectl get events -A --sort-by=.lastTimestamp | tail -100
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _ceph_csi_diagnostics
+  changed_when: false
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - _cephfs_csinode_ready.rc != 0
+- name: Ceph CSI 診断ログを出力（CSINode 未登録時）
+  ansible.builtin.debug:
+    msg: "{{ _ceph_csi_diagnostics.stdout }}"
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - _ceph_csi_diagnostics is defined
+    - _ceph_csi_diagnostics.stdout is defined
+- name: CSINode に CephFS CSI driver が登録されない場合は停止
+  ansible.builtin.fail:
+    msg: "{{ _cephfs_csinode_ready.stdout | default('CephFS CSI driver is not registered on all nodes') }}"
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - _cephfs_csinode_ready.rc != 0
+- name: cephfs-storage-class を使う PVC が Bound になるまで待機
+  ansible.builtin.shell: |
+    kubectl get pvc -A -o json | python3 -c '
+    import json, sys
+    data = json.load(sys.stdin)
+    targets = []
+    for item in data.get("items", []):
+      spec = item.get("spec", {})
+      if spec.get("storageClassName") != "cephfs-storage-class":
+        continue
+      ns = item.get("metadata", {}).get("namespace", "")
+      name = item.get("metadata", {}).get("name", "")
+      phase = item.get("status", {}).get("phase", "Unknown")
+      targets.append((ns, name, phase))
+    pending = [f"{ns}/{name}:{phase}" for ns, name, phase in targets if phase != "Bound"]
+    if not targets:
+      print("no cephfs-storage-class PVC found yet")
+      sys.exit(1)
+    if pending:
+      print("\n".join(pending))
+      sys.exit(1)
+    print("すべての cephfs-storage-class PVC が Bound になりました")
+    '
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _cephfs_pvc_bound
+  changed_when: false
+  failed_when: false
+  retries: 30
+  delay: 20
+  until: _cephfs_pvc_bound.rc == 0
+  when: inventory_hostname == groups['control_plane'][0]
+- name: Ceph CSI 診断ログを取得（PVC 未 Bound 時）
+  ansible.builtin.shell: |
+    set +e
+    echo "### kubectl get csidriver"
+    kubectl get csidriver
+    echo
+    echo "### kubectl get csinode"
+    kubectl get csinode -o wide
+    echo
+    echo "### kubectl -n rook-ceph get pods -o wide"
+    kubectl -n rook-ceph get pods -o wide
+    echo
+    echo "### kubectl -n rook-ceph get ds"
+    kubectl -n rook-ceph get ds
+    echo
+    echo "### kubectl get pvc -A"
+    kubectl get pvc -A
+    echo
+    echo "### kubectl get events -A --sort-by=.lastTimestamp | tail -100"
+    kubectl get events -A --sort-by=.lastTimestamp | tail -100
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _ceph_pvc_diagnostics
+  changed_when: false
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - _cephfs_pvc_bound.rc != 0
+- name: Ceph CSI 診断ログを出力（PVC 未 Bound 時）
+  ansible.builtin.debug:
+    msg: "{{ _ceph_pvc_diagnostics.stdout }}"
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - _ceph_pvc_diagnostics is defined
+    - _ceph_pvc_diagnostics.stdout is defined
+- name: cephfs-storage-class PVC が Bound にならない場合は停止
+  ansible.builtin.fail:
+    msg: "{{ _cephfs_pvc_bound.stdout | default('cephfs-storage-class PVC が Bound になっていません') }}"
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - _cephfs_pvc_bound.rc != 0

@@ -1,0 +1,76 @@
+######################################################################################################################################################
+# ファイル   : .pre-commit-config.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/05/19                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# pre-commit 検証設定
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+        exclude: ^platforms/applications/
+      - id: end-of-file-fixer
+        exclude: ^platforms/applications/
+      - id: trailing-whitespace
+        exclude: ^platforms/applications/
+      - id: check-merge-conflict
+      - id: no-commit-to-branch
+        args: [--branch, main, --branch, master]
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        files: ^platforms/scripts/.*\.sh$|^platforms/setup/setup\.sh$|^platforms/setup/lib/.*\.sh$|^platforms/setup/validate/.*\.sh$
+        args:
+          - --severity=warning
+          - --shell=bash
+  - repo: local
+    hooks:
+      - id: check-secrets-placeholder
+        name: K8s Secret placeholder check（replace-me 確認）
+        language: system
+        entry: bash platforms/setup/validate/check_secrets.sh
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+      - id: readme-policy
+        name: README policy check
+        language: system
+        entry: bash platforms/setup/validate/validate_readme.sh
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+      - id: shell-safety-policy
+        name: Shell safety policy check
+        language: system
+        entry: bash platforms/setup/validate/validate_shell_safety.sh
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+      - id: release-workflow-policy
+        name: Release workflow policy check
+        language: system
+        entry: bash platforms/setup/validate/validate_release_workflows.sh
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+      - id: python-syntax-policy
+        name: Python syntax policy check
+        language: system
+        entry: bash platforms/setup/validate/validate_python.sh
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+      - id: k8s-policy
+        name: Kubernetes policy check
+        language: python
+        entry: python platforms/setup/validate/validate_k8s_policy.py
+        additional_dependencies: [pyyaml]
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]

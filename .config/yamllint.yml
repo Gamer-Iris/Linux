@@ -1,0 +1,31 @@
+######################################################################################################################################################
+# ファイル   : yamllint.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/05/19                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# YAML lint 設定
+extends: default
+rules:
+  trailing-spaces:
+    level: warning
+  line-length:
+    max: 200
+    level: warning
+  document-start: disable
+  truthy:
+    allowed-values: ["true", "false", "yes", "no", "on", "off"]
+    check-keys: false
+    level: warning
+  comments:
+    min-spaces-from-content: 1
+  braces:
+    min-spaces-inside: 0
+    max-spaces-inside: 1
+    level: warning
+  empty-lines:
+    max: 2
+    max-start: 0
+    max-end: 1

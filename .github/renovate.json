@@ -1,0 +1,18 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "pre-commit": {
+    "enabled": false
+  },
+  "github-actions": {
+    "enabled": true
+  },
+  "timezone": "Asia/Tokyo",
+  "dependencyDashboard": true,
+  "labels": [
+    "dependencies"
+  ],
+  "pinDigests": false
+}

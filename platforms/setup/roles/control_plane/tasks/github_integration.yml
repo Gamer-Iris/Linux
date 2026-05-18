@@ -1,0 +1,338 @@
+######################################################################################################################################################
+# ファイル   : github_integration.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/05/19                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# GitHub Webhooks / Actions / self-hosted runner 設定
+- name: GitHub REST API version を解決
+  ansible.builtin.include_tasks: github_api_version.yml
+
+- name: GitHub 連携設定に必要な値を確認
+  ansible.builtin.assert:
+    that:
+      - github.token | default('') | length > 0
+      - github.owner | default('') | length > 0
+      - github.repo | default('') | length > 0
+      - github.runner_name | default('') | length > 0
+    fail_msg: >
+      github.enabled=true の場合は settings_secret.yml に
+      github.token / github.owner / github.repo / github.runner_name を設定してください。
+  no_log: true
+
+- name: GitHub 連携用 fact を設定
+  ansible.builtin.set_fact:
+    _github_repo_api: "https://api.github.com/repos/{{ github.owner }}/{{ github.repo }}"
+    _github_repo_url: "https://github.com/{{ github.owner }}/{{ github.repo }}"
+    _github_runner_dir: "{{ github.runner_dir | default(setup_user_home ~ '/actions-runner') }}"
+    _github_webhook_payload_url: "{{ github.webhook_url if (github.webhook_url | default('') | length > 0) else ((discord.url | regex_replace('/+$', '')) ~ '/github') }}"
+    _github_webhook_events: "{{ github.webhook_events | default(['create', 'delete', 'pull_request']) }}"
+    _github_headers:
+      Accept: application/vnd.github+json
+      Authorization: "Bearer {{ github.token }}"
+      X-GitHub-Api-Version: "{{ _resolved_github_api_version }}"
+  no_log: true
+
+- name: GitHub webhook config fact を設定
+  ansible.builtin.set_fact:
+    _github_webhook_config: >-
+      {{
+        {
+          'url': _github_webhook_payload_url,
+          'content_type': 'json',
+          'insecure_ssl': '0'
+        }
+        | combine(
+            ((github.webhook_secret | default('') | length) > 0)
+            | ternary({'secret': github.webhook_secret}, {})
+          )
+      }}
+  no_log: true
+
+- name: GitHub 連携設定概要を表示
+  ansible.builtin.debug:
+    msg:
+      - "GitHub repository: {{ github.owner }}/{{ github.repo }}"
+      - "webhook_enabled={{ github.webhook_enabled | default(false) | bool }}"
+      - "workflow_permission_enabled={{ github.workflow_permission_enabled | default(false) | bool }}"
+      - "runner_name={{ github.runner_name }}"
+      - "runner_reset={{ github.runner_reset | default(false) | bool }}"
+      - "dispatch_build_release={{ github.dispatch_build_release | default(false) | bool }}"
+
+- name: 既存 GitHub webhook を取得
+  ansible.builtin.uri:
+    url: "{{ _github_repo_api }}/hooks"
+    method: GET
+    headers: "{{ _github_headers }}"
+    return_content: true
+    status_code:
+      - 200
+      - 403
+      - 404
+  register: _github_hooks
+  no_log: true
+  when: github.webhook_enabled | default(false) | bool
+
+- name: GitHub webhook API 権限不足を表示して停止
+  ansible.builtin.fail:
+    msg: >-
+      GitHub webhook API の取得に失敗しました。
+      github.webhook_enabled=true の場合は settings_secret.yml の github.token に
+      対象 repository の Webhooks Read and write 権限が必要です。
+      webhook 自動設定を使わない場合は github.webhook_enabled=false にしてください。
+      status={{ _github_hooks.status | default('unknown') }}
+  when:
+    - github.webhook_enabled | default(false) | bool
+    - (_github_hooks.status | default(0) | int) != 200
+
+- name: GitHub webhook 一致候補を設定
+  ansible.builtin.set_fact:
+    _github_matching_webhooks: >-
+      {{
+        _github_hooks.json
+        | selectattr('config.url', 'defined')
+        | selectattr('config.url', 'equalto', _github_webhook_payload_url)
+        | list
+      }}
+  no_log: true
+  when: github.webhook_enabled | default(false) | bool
+
+- name: 既存 GitHub webhook を更新
+  ansible.builtin.uri:
+    url: "{{ _github_repo_api }}/hooks/{{ (_github_matching_webhooks | first).id }}"
+    method: PATCH
+    headers: "{{ _github_headers }}"
+    body_format: json
+    body:
+      name: web
+      active: true
+      events: "{{ _github_webhook_events }}"
+      config: "{{ _github_webhook_config }}"
+    status_code: 200
+  register: _github_webhook_update
+  when: >
+    (github.webhook_enabled | default(false) | bool) and
+    (_github_matching_webhooks | length) > 0 and
+    (
+      not ((_github_matching_webhooks | first).active | default(false) | bool) or
+      ((_github_matching_webhooks | first).config.content_type | default('')) != 'json' or
+      (((_github_matching_webhooks | first).events | default([]) | sort) != (_github_webhook_events | sort))
+    )
+  no_log: true
+
+- name: GitHub webhook を作成
+  ansible.builtin.uri:
+    url: "{{ _github_repo_api }}/hooks"
+    method: POST
+    headers: "{{ _github_headers }}"
+    body_format: json
+    body:
+      name: web
+      active: true
+      events: "{{ _github_webhook_events }}"
+      config: "{{ _github_webhook_config }}"
+    status_code: 201
+  register: _github_webhook_create
+  when: >
+    (github.webhook_enabled | default(false) | bool) and
+    (_github_matching_webhooks | length) == 0
+  no_log: true
+
+- name: GitHub webhook 無効を表示
+  ansible.builtin.debug:
+    msg: "GitHub webhook: disabled"
+  when: not (github.webhook_enabled | default(false) | bool)
+
+- name: GitHub webhook 設定結果を表示
+  ansible.builtin.debug:
+    msg: >-
+      GitHub webhook 処理結果:
+      {{
+        ((_github_matching_webhooks | length) == 0)
+        | ternary(
+            '作成しました',
+            ((_github_webhook_update is defined) and (_github_webhook_update is changed))
+            | ternary('更新しました', '既に設定済みです')
+          )
+      }}
+  when: github.webhook_enabled | default(false) | bool
+
+- name: GitHub Actions workflow permission を read/write に設定
+  ansible.builtin.uri:
+    url: "{{ _github_repo_api }}/actions/permissions/workflow"
+    method: PUT
+    headers: "{{ _github_headers }}"
+    body_format: json
+    body:
+      default_workflow_permissions: write
+      can_approve_pull_request_reviews: false
+    status_code: 204
+  no_log: true
+  when: github.workflow_permission_enabled | default(false) | bool
+
+- name: runner 対応アーキテクチャを設定
+  ansible.builtin.set_fact:
+    _github_runner_arch: "{{ {'x86_64': 'x64', 'aarch64': 'arm64', 'arm64': 'arm64'}.get(ansible_facts['architecture'], '') }}"
+
+- name: runner 対応アーキテクチャ外の場合は停止
+  ansible.builtin.fail:
+    msg: "GitHub Actions runner の未対応アーキテクチャです: {{ ansible_facts['architecture'] }}"
+  when: _github_runner_arch | length == 0
+
+- name: runner ディレクトリを作成
+  ansible.builtin.file:
+    path: "{{ _github_runner_dir }}"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0755"
+
+- name: 既存 runner 登録状態を確認
+  ansible.builtin.stat:
+    path: "{{ _github_runner_dir }}/.runner"
+  register: _github_runner_config
+
+- name: 既存 runner service を停止（再登録時のみ）
+  ansible.builtin.command: ./svc.sh stop
+  args:
+    chdir: "{{ _github_runner_dir }}"
+  register: _github_runner_stop
+  changed_when: _github_runner_stop.rc == 0
+  failed_when: false
+  when:
+    - github.runner_reset | default(false) | bool
+    - _github_runner_config.stat.exists
+
+- name: 既存 runner service をアンインストール（再登録時のみ）
+  ansible.builtin.command: ./svc.sh uninstall
+  args:
+    chdir: "{{ _github_runner_dir }}"
+  register: _github_runner_uninstall
+  changed_when: _github_runner_uninstall.rc == 0
+  failed_when: false
+  when:
+    - github.runner_reset | default(false) | bool
+    - _github_runner_config.stat.exists
+
+- name: 既存 runner 登録ファイルを削除（再登録時のみ）
+  ansible.builtin.file:
+    path: "{{ _github_runner_dir }}/{{ item }}"
+    state: absent
+  loop:
+    - .runner
+    - .credentials
+    - .credentials_rsaparams
+  when:
+    - github.runner_reset | default(false) | bool
+    - _github_runner_config.stat.exists
+
+- name: runner 登録状態を再確認
+  ansible.builtin.stat:
+    path: "{{ _github_runner_dir }}/.runner"
+  register: _github_runner_config_after_reset
+
+- name: GitHub Actions runner 最新 release を取得
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/actions/runner/releases/latest
+    method: GET
+    headers: "{{ _github_headers }}"
+    return_content: true
+  register: _github_runner_release
+  when: not _github_runner_config_after_reset.stat.exists
+  no_log: true
+
+- name: GitHub Actions runner version を設定
+  ansible.builtin.set_fact:
+    _github_runner_version: "{{ _github_runner_release.json.tag_name | regex_replace('^v', '') }}"
+  when: not _github_runner_config_after_reset.stat.exists
+
+- name: GitHub Actions runner をダウンロード
+  ansible.builtin.get_url:
+    url: >-
+      https://github.com/actions/runner/releases/download/{{
+        _github_runner_release.json.tag_name
+      }}/actions-runner-linux-{{ _github_runner_arch }}-{{ _github_runner_version }}.tar.gz
+    dest: "{{ _github_runner_dir }}/actions-runner-linux-{{ _github_runner_arch }}-{{ _github_runner_version }}.tar.gz"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0644"
+  when: not _github_runner_config_after_reset.stat.exists
+
+- name: GitHub Actions runner を展開
+  ansible.builtin.unarchive:
+    src: "{{ _github_runner_dir }}/actions-runner-linux-{{ _github_runner_arch }}-{{ _github_runner_version }}.tar.gz"
+    dest: "{{ _github_runner_dir }}"
+    remote_src: true
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    creates: "{{ _github_runner_dir }}/config.sh"
+  when: not _github_runner_config_after_reset.stat.exists
+
+- name: runner 依存パッケージをインストール
+  ansible.builtin.command: ./bin/installdependencies.sh
+  args:
+    chdir: "{{ _github_runner_dir }}"
+  changed_when: false
+  when: not _github_runner_config_after_reset.stat.exists
+
+- name: repository runner registration token を取得
+  ansible.builtin.uri:
+    url: "{{ _github_repo_api }}/actions/runners/registration-token"
+    method: POST
+    headers: "{{ _github_headers }}"
+    status_code: 201
+  register: _github_runner_token
+  when: not _github_runner_config_after_reset.stat.exists
+  no_log: true
+
+- name: GitHub Actions runner を登録
+  ansible.builtin.command: >
+    ./config.sh
+    --unattended
+    --replace
+    --name {{ github.runner_name }}
+    --url {{ _github_repo_url }}
+    --token {{ _github_runner_token.json.token }}
+    --labels {{ github.runner_labels | default('self-hosted') }}
+    --work _work
+  args:
+    chdir: "{{ _github_runner_dir }}"
+  become: false
+  when: not _github_runner_config_after_reset.stat.exists
+  no_log: true
+
+- name: runner systemd service の存在確認
+  ansible.builtin.shell: |
+    systemctl list-unit-files "actions.runner.{{ github.owner }}-{{ github.repo }}.{{ github.runner_name }}.service" --no-legend | grep -q '^actions\.runner\.'
+  register: _github_runner_service
+  changed_when: false
+  failed_when: false
+
+- name: runner systemd service をインストール
+  ansible.builtin.command: "./svc.sh install {{ ansible_user }}"
+  args:
+    chdir: "{{ _github_runner_dir }}"
+  when: _github_runner_service.rc != 0
+
+- name: runner systemd service を起動
+  ansible.builtin.command: ./svc.sh start
+  args:
+    chdir: "{{ _github_runner_dir }}"
+  register: _github_runner_start
+  changed_when: "'Started' in _github_runner_start.stdout or 'started' in _github_runner_start.stdout"
+
+- name: Build and Release workflow を実行（有効時のみ）
+  ansible.builtin.uri:
+    url: "{{ _github_repo_api }}/actions/workflows/{{ github.build_release_workflow | default('build-release.yml') }}/dispatches"
+    method: POST
+    headers: "{{ _github_headers }}"
+    body_format: json
+    body:
+      ref: "{{ github.build_release_ref | default('main') }}"
+    status_code:
+      - 200
+      - 204
+  when: github.dispatch_build_release | default(false) | bool
+  no_log: true

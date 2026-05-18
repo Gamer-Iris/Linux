@@ -1,0 +1,50 @@
+######################################################################################################################################################
+# ファイル   : smb-pvc-navidrome-music.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/05/19                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# Navidrome 音楽用 TrueNAS SMB PV/PVC
+# ${SMB_IP} は setup.sh all / control-plane の app 反映時に展開して apply する。
+# このファイルには環境固有 IP を直接書かない。
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: navidrome-music-pv
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: navidrome-music-smb
+  mountOptions:
+    - dir_mode=0775
+    - file_mode=0664
+    - vers=3.0
+    - noserverino
+  csi:
+    driver: smb.csi.k8s.io
+    readOnly: false
+    volumeHandle: navidrome-music-smb
+    volumeAttributes:
+      source: //${SMB_IP}/music
+    nodeStageSecretRef:
+      name: navidrome-smb-secret
+      namespace: navidrome
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: navidrome-music-pvc
+  namespace: navidrome
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: navidrome-music-smb
+  volumeName: navidrome-music-pv

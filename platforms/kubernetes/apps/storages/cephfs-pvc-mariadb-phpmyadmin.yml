@@ -1,0 +1,21 @@
+######################################################################################################################################################
+# ファイル   : cephfs-pvc-mariadb-phpmyadmin.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/05/19                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# MariaDB/phpMyAdmin 用 PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mariadb-phpmyadmin-pvc
+  namespace: mariadb-phpmyadmin
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: cephfs-storage-class
