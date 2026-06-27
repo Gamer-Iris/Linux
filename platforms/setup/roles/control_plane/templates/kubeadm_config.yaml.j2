@@ -1,0 +1,12 @@
+---
+# kubeadm 初期化設定
+# settings_secret.yml の kubernetes.* セクションから生成される
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: InitConfiguration
+nodeRegistration:
+  criSocket: {{ kubernetes.cri_socket }}
+---
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: ClusterConfiguration
+networking:
+  podSubnet: "{{ kubernetes.pod_network_cidr }}"

@@ -1,0 +1,52 @@
+######################################################################################################################################################
+# ファイル   : pvc-alerts.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/06/27                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# PVC 監視ルール
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: pvc-alerts
+  namespace: monitoring
+  labels:
+    app: kube-prometheus-stack
+    release: monitoring
+spec:
+  groups:
+    - name: pvc.usage
+      interval: 60s
+      rules:
+        - alert: PVCUsageWarning
+          expr: |
+            (
+              kubelet_volume_stats_used_bytes
+              / kubelet_volume_stats_capacity_bytes
+            ) > 0.80
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "PVC usage above 80%"
+            description: >-
+              PVC {{ $labels.persistentvolumeclaim }} in namespace {{ $labels.namespace }}
+              is at {{ $value | humanizePercentage }} capacity.
+              Consider expanding or cleaning up data.
+        - alert: PVCUsageCritical
+          expr: |
+            (
+              kubelet_volume_stats_used_bytes
+              / kubelet_volume_stats_capacity_bytes
+            ) > 0.95
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "PVC usage above 95%"
+            description: >-
+              PVC {{ $labels.persistentvolumeclaim }} in namespace {{ $labels.namespace }}
+              is at {{ $value | humanizePercentage }} capacity.
+              Immediate action required to prevent write failures.

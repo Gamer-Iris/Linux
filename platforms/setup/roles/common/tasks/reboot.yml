@@ -1,0 +1,57 @@
+######################################################################################################################################################
+# ファイル   : reboot.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/06/27                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# 必要時 reboot 処理
+- name: handlers を flush
+  ansible.builtin.meta: flush_handlers
+- name: containerd が起動していることを確認
+  when: not ansible_check_mode
+  ansible.builtin.service:
+    name: containerd
+    state: started
+- name: SSH 接続情報を確認
+  become: false
+  check_mode: false
+  changed_when: false
+  ansible.builtin.command: /bin/sh -c 'printf %s "$SSH_CONNECTION"'
+  register: _common_ssh_connection
+- name: SSH 接続情報を分解
+  ansible.builtin.set_fact:
+    _common_ssh_connection_fields: "{{ (_common_ssh_connection.stdout | default('')).split() }}"
+- name: setup.sh 実行ホスト自身か判定
+  ansible.builtin.set_fact:
+    _common_is_active_controller: >-
+      {{
+        (
+          (_common_ssh_connection_fields | length) >= 3 and
+          _common_ssh_connection_fields[0] == _common_ssh_connection_fields[2]
+        )
+      }}
+- name: reboot 要否をログ出力
+  ansible.builtin.debug:
+    msg: "reboot_required={{ _common_needs_reboot | default(false) }}, active_controller={{ _common_is_active_controller | default(false) }}"
+- name: setup.sh 実行ホスト自身の再起動が必要な場合は停止
+  when:
+    - not ansible_check_mode
+    - _common_needs_reboot | default(false)
+    - _common_is_active_controller | default(false)
+  ansible.builtin.fail:
+    msg: >-
+      このホストは setup.sh を実行中の Ansible controller であり、Ansible 実行中には再起動しません。
+      OS が /var/run/reboot-required により再起動を要求しています。
+      setup.sh common はここで停止します。ログ確認後に sudo reboot を手動実行し、
+      再接続後に tmux を作り直して ./setup.sh common を再実行してください。
+- name: OS が要求する場合のみ再起動
+  when:
+    - not ansible_check_mode
+    - _common_needs_reboot | default(false)
+    - not (_common_is_active_controller | default(false))
+  ansible.builtin.reboot:
+    reboot_timeout: "{{ reboot_timeout }}"
+    post_reboot_delay: "{{ post_reboot_delay }}"
+    test_command: kubeadm version

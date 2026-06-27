@@ -1,0 +1,33 @@
+######################################################################################################################################################
+# ファイル   : main.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/06/27                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# control_plane role 既定値
+argocd_namespace: argocd
+metallb_namespace: metallb-system
+sealed_secrets_namespace: sealed-secrets
+rook_namespace: rook-ceph
+rook_external_namespace: rook-ceph-external
+rook_work_dir: /tmp/rook-import
+kubeadm_join_command_file: /tmp/kubeadm_join_command.txt
+github:
+  enabled: false
+  owner: Gamer-Iris
+  repo: Linux
+  token: ""
+  api_version: "{{ github_api_version | default('auto') }}"
+  webhook_enabled: false
+  webhook_url: ""
+  webhook_secret: ""
+  workflow_permission_enabled: false
+  runner_name: linux-runner
+  runner_labels: self-hosted
+  runner_dir: "{{ setup_user_home }}/actions-runner"
+  runner_reset: false
+  dispatch_build_release: false
+  build_release_workflow: build-release.yml
+  build_release_ref: main

@@ -1,0 +1,326 @@
+######################################################################################################################################################
+# ファイル   : init.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/06/27                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# Kubernetes 初期化
+- name: kubeadm 初期化済みか確認（CP[0] のみ）
+  ansible.builtin.stat:
+    path: /etc/kubernetes/admin.conf
+  register: _kubeadm_init_done
+  when: inventory_hostname == groups['control_plane'][0]
+- name: kubeadm 設定ファイルを生成（CP[0] のみ、未初期化時）
+  ansible.builtin.template:
+    src: kubeadm_config.yaml.j2
+    dest: /tmp/kubeadm_config.yaml
+    mode: "0644"
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - not _kubeadm_init_done.stat.exists
+- name: kubeadm init を実行（CP[0] のみ、未初期化時）
+  ansible.builtin.command: kubeadm init --config /tmp/kubeadm_config.yaml
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - not _kubeadm_init_done.stat.exists
+- name: .kube ディレクトリを作成
+  ansible.builtin.file:
+    path: "{{ setup_user_home }}/.kube"
+    state: directory
+    mode: "0755"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - not ansible_check_mode
+- name: admin.conf を ansible_user の kubeconfig としてコピー
+  ansible.builtin.copy:
+    src: /etc/kubernetes/admin.conf
+    dest: "{{ setup_user_home }}/.kube/config"
+    remote_src: true
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0600"
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - not ansible_check_mode
+- name: GitHub REST API version を解決
+  ansible.builtin.include_tasks: github_api_version.yml
+  when: inventory_hostname == groups['control_plane'][0]
+- name: Calico 最新 release tag を GitHub API から取得（CP[0] のみ）
+  check_mode: false
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/projectcalico/calico/releases/latest
+    headers:
+      Accept: application/vnd.github+json
+      X-GitHub-Api-Version: "{{ _resolved_github_api_version }}"
+  register: _calico_release
+  when: inventory_hostname == groups['control_plane'][0]
+- name: 解決した Calico version をログ出力（CP[0] のみ）
+  ansible.builtin.debug:
+    msg: "Calico install version: {{ _calico_release.json.tag_name }} を適用します"
+  when: inventory_hostname == groups['control_plane'][0]
+- name: Calico CNI を適用（CP[0] のみ）
+  ansible.builtin.command: >
+    kubectl apply -f
+    "https://raw.githubusercontent.com/projectcalico/calico/{{ _calico_release.json.tag_name }}/manifests/calico.yaml"
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  become: false
+  when: inventory_hostname == groups['control_plane'][0]
+  register: _calico_apply
+  changed_when: >
+    'created' in _calico_apply.stdout or
+    'configured' in _calico_apply.stdout
+- name: Calico default IPPool が作成されるまで待機（CP[0] のみ）
+  ansible.builtin.command: kubectl get ippool default-ipv4-ippool -o name
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  become: false
+  changed_when: false
+  register: _calico_ippool_ready
+  retries: 30
+  delay: 5
+  until: _calico_ippool_ready.rc == 0
+  when: inventory_hostname == groups['control_plane'][0]
+- name: Calico IPPool CRD が Established になるまで待機（CP[0] のみ）
+  ansible.builtin.command: kubectl wait --for=condition=Established crd/ippools.crd.projectcalico.org --timeout=10s
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  become: false
+  changed_when: false
+  register: _calico_ippool_crd_established
+  retries: 12
+  delay: 5
+  until: _calico_ippool_crd_established.rc == 0
+  when: inventory_hostname == groups['control_plane'][0]
+- name: Calico default IPPool の VXLAN 現在値を確認（CP[0] のみ）
+  ansible.builtin.command: >
+    kubectl get ippool default-ipv4-ippool
+    -o jsonpath='{.spec.ipipMode}{" "}{.spec.vxlanMode}'
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  become: false
+  changed_when: false
+  register: _calico_ippool_current
+  when: inventory_hostname == groups['control_plane'][0]
+- name: Calico default IPPool を VXLAN に設定（CP[0] のみ）
+  ansible.builtin.command: >
+    kubectl patch ippool default-ipv4-ippool
+    --type merge
+    -p '{"spec":{"ipipMode":"Never","vxlanMode":"Always"}}'
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  become: false
+  register: _calico_ippool_patch
+  changed_when: true
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - _calico_ippool_current.stdout != 'Never Always'
+- name: Calico FelixConfiguration CRD が Established になるまで待機（CP[0] のみ）
+  ansible.builtin.command: kubectl wait --for=condition=Established crd/felixconfigurations.crd.projectcalico.org --timeout=10s
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  become: false
+  changed_when: false
+  register: _calico_felix_crd_established
+  retries: 12
+  delay: 5
+  until: _calico_felix_crd_established.rc == 0
+  when: inventory_hostname == groups['control_plane'][0]
+- name: Calico FelixConfiguration projectcalico.org/v3 API を確認（CP[0] のみ）
+  ansible.builtin.shell: |
+    set -o pipefail
+    kubectl get --raw /apis/projectcalico.org/v3 \
+      | grep -Eq '"name"[[:space:]]*:[[:space:]]*"felixconfigurations"'
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  become: false
+  changed_when: false
+  failed_when: false
+  register: _calico_felix_projectcalico_api
+  when: inventory_hostname == groups['control_plane'][0]
+- name: Calico FelixConfiguration crd.projectcalico.org/v1 API を確認（CP[0] のみ）
+  ansible.builtin.shell: |
+    set -o pipefail
+    kubectl get --raw /apis/crd.projectcalico.org/v1 \
+      | grep -Eq '"name"[[:space:]]*:[[:space:]]*"felixconfigurations"'
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  become: false
+  changed_when: false
+  register: _calico_felix_crd_api
+  retries: 12
+  delay: 5
+  until: _calico_felix_crd_api.rc == 0
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - _calico_felix_projectcalico_api.rc != 0
+# この repo は calico.yaml を直接 apply し、Calico API server は導入しない。
+# そのため projectcalico.org/v3 が kubectl API resource として存在しない場合だけ、
+# calico.yaml に含まれる Kubernetes CRD の crd.projectcalico.org/v1 を使う。
+# 将来 Calico API server または native v3 CRD へ移行した場合は projectcalico.org/v3 を優先する。
+- name: Calico FelixConfiguration API version を決定（CP[0] のみ）
+  ansible.builtin.set_fact:
+    _calico_felix_api_version: "{{ 'projectcalico.org/v3' if _calico_felix_projectcalico_api.rc == 0 else 'crd.projectcalico.org/v1' }}"
+    _calico_felix_resource: "{{ 'felixconfigurations.projectcalico.org' if _calico_felix_projectcalico_api.rc == 0 else 'felixconfigurations.crd.projectcalico.org' }}"
+  when: inventory_hostname == groups['control_plane'][0]
+- name: Calico Felix checksum offload workaround 現在値を確認（CP[0] のみ）
+  ansible.builtin.command: >
+    kubectl get {{ _calico_felix_resource }} default
+    -o jsonpath={.spec.featureDetectOverride}
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  become: false
+  changed_when: false
+  failed_when: false
+  register: _calico_felix_current
+  when: inventory_hostname == groups['control_plane'][0]
+- name: Calico Felix checksum offload workaround を設定（CP[0] のみ）
+  ansible.builtin.shell: |
+    set -eo pipefail
+    current="{{ _calico_felix_current.stdout | default('') }}"
+    desired="$(printf '%s' "${current}" \
+      | tr ',' '\n' \
+      | grep -Ev '^ChecksumOffloadBroken=' \
+      | sed '/^$/d' \
+      | paste -sd, - || true)"
+    if [ -n "${desired}" ]; then
+      desired="${desired},ChecksumOffloadBroken=true"
+    else
+      desired="ChecksumOffloadBroken=true"
+    fi
+    cat <<EOF | kubectl apply -f -
+    apiVersion: {{ _calico_felix_api_version }}
+    kind: FelixConfiguration
+    metadata:
+      name: default
+    spec:
+      featureDetectOverride: "${desired}"
+    EOF
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  become: false
+  register: _calico_felix_apply
+  changed_when: >
+    'created' in _calico_felix_apply.stdout or
+    'configured' in _calico_felix_apply.stdout
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - _calico_felix_current.rc != 0 or not ((_calico_felix_current.stdout | default('')) is search('(^|,)ChecksumOffloadBroken=true(,|$)'))
+- name: Calico Felix checksum offload workaround 設定値を検証（CP[0] のみ）
+  ansible.builtin.command: >
+    kubectl get {{ _calico_felix_resource }} default
+    -o jsonpath={.spec.featureDetectOverride}
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  become: false
+  changed_when: false
+  register: _calico_felix_verify
+  failed_when: not (_calico_felix_verify.stdout is search('(^|,)ChecksumOffloadBroken=true(,|$)'))
+  when: inventory_hostname == groups['control_plane'][0]
+- name: Calico node を再起動して VXLAN / Felix 設定を反映（CP[0] のみ）
+  ansible.builtin.command: kubectl -n kube-system rollout restart ds/calico-node
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  become: false
+  register: _calico_rollout_restart
+  changed_when: "'restarted' in _calico_rollout_restart.stdout"
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - >
+      (_calico_ippool_patch is defined and (_calico_ippool_patch.changed | default(false))) or
+      (_calico_felix_apply is defined and (_calico_felix_apply.changed | default(false)))
+- name: Calico node rollout 完了を待機（CP[0] のみ）
+  ansible.builtin.command: kubectl -n kube-system rollout status ds/calico-node --timeout=240s
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  become: false
+  changed_when: false
+  register: _calico_rollout_status
+  retries: 2
+  delay: 20
+  until: _calico_rollout_status.rc == 0
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - >
+      (_calico_ippool_patch is defined and (_calico_ippool_patch.changed | default(false))) or
+      (_calico_felix_apply is defined and (_calico_felix_apply.changed | default(false)))
+- name: Calico node が Running になるまで待機（CP[0] のみ）
+  ansible.builtin.shell: |
+    kubectl -n kube-system wait pod \
+      -l k8s-app=calico-node \
+      --for=condition=Ready \
+      --timeout=240s
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  become: false
+  changed_when: false
+  register: _calico_node_ready
+  retries: 2
+  delay: 20
+  until: _calico_node_ready.rc == 0
+  when: inventory_hostname == groups['control_plane'][0]
+- name: control-plane に vxlan.calico が存在することを確認（CP[0] のみ）
+  ansible.builtin.command: ip link show vxlan.calico
+  become: true
+  changed_when: false
+  register: _calico_vxlan_link
+  retries: 12
+  delay: 10
+  until: _calico_vxlan_link.rc == 0
+  when: inventory_hostname == groups['control_plane'][0]
+- name: control plane ノードが Ready になるまで待機（CP[0] のみ）
+  ansible.builtin.shell: |
+    kubectl wait node \
+      --for=condition=Ready \
+      --all \
+      --timeout={{ node_ready_timeout }}s
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  become: false
+  when: inventory_hostname == groups['control_plane'][0]
+  changed_when: false
+  register: _node_ready
+  retries: 3
+  delay: 30
+  until: _node_ready.rc == 0
+- name: kubeadm join コマンドを生成（CP[0] のみ）
+  ansible.builtin.command: kubeadm token create --print-join-command
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _join_command_result
+  changed_when: false
+  no_log: true
+  when: inventory_hostname == groups['control_plane'][0]
+- name: join コマンドを CP[0] の hostvars に保存（workers Play が参照）
+  ansible.builtin.set_fact:
+    kubeadm_join_command: "{{ _join_command_result.stdout }}"
+  no_log: true
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - _join_command_result.stdout is defined
+- name: GitHub Webhooks / Actions / self-hosted runner を設定（有効時のみ）
+  ansible.builtin.include_tasks: github_integration.yml
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - github.enabled | default(false) | bool
+    - not ansible_check_mode
+    - setup_mode | default('') != 'secrets'
+
+- name: GitHub 連携設定をスキップしたことを表示
+  ansible.builtin.debug:
+    msg: "GitHub integration は github.enabled=false のためスキップします"
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - not (github.enabled | default(false) | bool)
+    - not ansible_check_mode
+    - setup_mode | default('') != 'secrets'

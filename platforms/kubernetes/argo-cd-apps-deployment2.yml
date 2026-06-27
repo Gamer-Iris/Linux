@@ -1,0 +1,71 @@
+######################################################################################################################################################
+# ファイル   : argo-cd-apps-deployment2.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/06/27                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# Argo CD アプリ定義
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: sealed-secrets
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-30"
+spec:
+  project: default
+  source:
+    repoURL: "https://bitnami.github.io/sealed-secrets"
+    targetRevision: "*"
+    chart: sealed-secrets
+  destination:
+    server: "https://kubernetes.default.svc"
+    namespace: sealed-secrets
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rook-release
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-20"
+spec:
+  project: default
+  source:
+    repoURL: "https://charts.rook.io/release"
+    targetRevision: "*"
+    chart: rook-ceph
+    helm:
+      values: |
+        csi:
+          # 最新 chart の既定値は csi-operator だが、この構成は外部 Ceph import と
+          # Rook operator 管理 CSI を使うため明示的に無効化する。
+          rookUseCsiOperator: false
+          disableCsiDriver: "false"
+          enableCephfsDriver: true
+          enableRbdDriver: true
+          csiDriverNamePrefix: rook-ceph
+          pluginTolerations:
+            - key: node-role.kubernetes.io/control-plane
+              operator: Exists
+              effect: NoSchedule
+            - key: node-role.kubernetes.io/master
+              operator: Exists
+              effect: NoSchedule
+  destination:
+    server: "https://kubernetes.default.svc"
+    namespace: rook-ceph
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true

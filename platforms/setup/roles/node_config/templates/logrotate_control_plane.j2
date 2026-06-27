@@ -1,0 +1,12 @@
+# Ansible node_config role により自動デプロイ（手動編集不要）
+/var/log/minecraft/minecraft_start.log
+/var/log/minecraft/minecraft_stop.log
+/var/log/update/update.log
+/var/log/kubernetes/kubernetes_cron.log
+{{ setup_user_home }}/Linux/platforms/setup/logs/setup_*.log
+{
+    su root root
+    rotate 2
+    weekly
+    missingok
+}

@@ -1,0 +1,204 @@
+######################################################################################################################################################
+# ファイル   : argo-cd-apps-deployment4.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/06/27                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# Argo CD アプリ定義
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cloudflare
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  project: default
+  source:
+    repoURL: "git@github.com:Gamer-Iris/Linux.git"
+    targetRevision: HEAD
+    path: "./platforms/kubernetes/apps/cloudflare"
+  destination:
+    server: "https://kubernetes.default.svc"
+    namespace: cloudflare
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: coredns
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  project: default
+  source:
+    repoURL: "git@github.com:Gamer-Iris/Linux.git"
+    targetRevision: HEAD
+    path: "./platforms/kubernetes/apps/coredns"
+  destination:
+    server: "https://kubernetes.default.svc"
+    namespace: coredns
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mariadb-phpmyadmin
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  project: default
+  source:
+    repoURL: "git@github.com:Gamer-Iris/Linux.git"
+    targetRevision: HEAD
+    path: "./platforms/kubernetes/apps/mariadb-phpmyadmin"
+  destination:
+    server: "https://kubernetes.default.svc"
+    namespace: mariadb-phpmyadmin
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: metallb
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  project: default
+  source:
+    repoURL: "git@github.com:Gamer-Iris/Linux.git"
+    targetRevision: HEAD
+    path: "./platforms/kubernetes/apps/metallb"
+  destination:
+    server: "https://kubernetes.default.svc"
+    namespace: metallb
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: minecraft
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  project: default
+  source:
+    repoURL: "git@github.com:Gamer-Iris/Linux.git"
+    targetRevision: HEAD
+    path: "./platforms/kubernetes/apps/minecraft"
+  destination:
+    server: "https://kubernetes.default.svc"
+    namespace: minecraft
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: false
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  project: default
+  source:
+    repoURL: "https://prometheus-community.github.io/helm-charts"
+    targetRevision: "*"
+    chart: kube-prometheus-stack
+    helm:
+      valueFiles:
+        - https://raw.githubusercontent.com/Gamer-Iris/Linux/main/platforms/kubernetes/apps/monitoring/values.yml
+  destination:
+    server: "https://kubernetes.default.svc"
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring-rules
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "20"
+spec:
+  project: default
+  source:
+    repoURL: "git@github.com:Gamer-Iris/Linux.git"
+    targetRevision: HEAD
+    path: "./platforms/kubernetes/apps/monitoring/rules"
+  destination:
+    server: "https://kubernetes.default.svc"
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: navidrome
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  project: default
+  source:
+    repoURL: "git@github.com:Gamer-Iris/Linux.git"
+    targetRevision: HEAD
+    path: "./platforms/kubernetes/apps/navidrome"
+  destination:
+    server: "https://kubernetes.default.svc"
+    namespace: navidrome
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: wordpress
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  project: default
+  source:
+    repoURL: "git@github.com:Gamer-Iris/Linux.git"
+    targetRevision: HEAD
+    path: "./platforms/kubernetes/apps/wordpress"
+  destination:
+    server: "https://kubernetes.default.svc"
+    namespace: wordpress
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

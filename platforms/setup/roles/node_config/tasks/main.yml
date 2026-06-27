@@ -1,0 +1,113 @@
+######################################################################################################################################################
+# ファイル   : main.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/06/27                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# cron と logrotate 設定
+- name: cron サービスを有効化して起動する
+  ansible.builtin.service:
+    name: cron
+    state: started
+    enabled: true
+- name: 管理対象 cron 行と競合 cron 行を削除する
+  ansible.builtin.shell: |
+    (crontab -l -u "{{ ansible_user }}" 2>/dev/null || true) \
+      | grep -v -E '#Ansible: (PATH|update|minecraft_cron1|minecraft_cron2|kubernetes_cron_and_update)$' \
+      | grep -v 'platforms/scripts/update\.sh' \
+      | grep -v '/minecraft_cron1\.sh' \
+      | grep -v '/minecraft_cron2\.sh' \
+      | grep -v '/kubernetes_cron\.sh' \
+      | grep -v '^PATH=/bin/bash:/usr/local/sbin:/usr/bin:/bin:/usr/local/bin$' \
+      | crontab -u "{{ ansible_user }}" -
+  args:
+    executable: /bin/bash
+  changed_when: false
+- name: 競合する logrotate ファイルを削除する
+  ansible.builtin.file:
+    path: /etc/logrotate.d/logrotate
+    state: absent
+- name: control_plane 用 crontab を設定する
+  when: inventory_hostname in groups['control_plane']
+  block:
+    - name: crontab に PATH を設定する
+      ansible.builtin.cron:
+        user: "{{ ansible_user }}"
+        name: PATH
+        env: true
+        value: "/bin/bash:/usr/local/sbin:/usr/bin:/bin:/usr/local/bin"
+    - name: update.sh を登録する
+      ansible.builtin.cron:
+        user: "{{ ansible_user }}"
+        name: "update"
+        minute: "0"
+        hour: "3"
+        weekday: "2"
+        job: "~/Linux/platforms/scripts/update.sh"
+    - name: kubernetes_cron.sh を登録する（cluster health check）
+      ansible.builtin.cron:
+        user: "{{ ansible_user }}"
+        name: "kubernetes_cron"
+        minute: "0"
+        hour: "*/6"
+        job: "~/Linux/platforms/scripts/kubernetes/kubernetes_cron.sh"
+- name: workers 用 crontab を設定する
+  when: inventory_hostname in groups['workers']
+  block:
+    - name: crontab に PATH を設定する
+      ansible.builtin.cron:
+        user: "{{ ansible_user }}"
+        name: PATH
+        env: true
+        value: "/bin/bash:/usr/local/sbin:/usr/bin:/bin:/usr/local/bin"
+    - name: update.sh を登録する
+      ansible.builtin.cron:
+        user: "{{ ansible_user }}"
+        name: "update"
+        minute: "0"
+        hour: "1"
+        weekday: "2"
+        job: "~/Linux/platforms/scripts/update.sh"
+- name: proxmox 用 crontab を設定する
+  when: inventory_hostname in groups['proxmox']
+  block:
+    - name: crontab に PATH を設定する
+      ansible.builtin.cron:
+        user: "{{ ansible_user }}"
+        name: PATH
+        env: true
+        value: "/bin/bash:/usr/local/sbin:/usr/bin:/bin:/usr/local/bin"
+    - name: update.sh を登録する
+      ansible.builtin.cron:
+        user: "{{ ansible_user }}"
+        name: "update"
+        minute: "0"
+        hour: "0"
+        weekday: "2"
+        job: "~/Linux/platforms/scripts/update.sh"
+- name: control_plane 用 logrotate 設定を配置する
+  when: inventory_hostname in groups['control_plane']
+  ansible.builtin.template:
+    src: logrotate_control_plane.j2
+    dest: /etc/logrotate.d/linux-platforms
+    owner: root
+    group: root
+    mode: "0644"
+- name: workers 用 logrotate 設定を配置する
+  when: inventory_hostname in groups['workers']
+  ansible.builtin.template:
+    src: logrotate_workers.j2
+    dest: /etc/logrotate.d/linux-platforms
+    owner: root
+    group: root
+    mode: "0644"
+- name: proxmox 用 logrotate 設定を配置する
+  when: inventory_hostname in groups['proxmox']
+  ansible.builtin.template:
+    src: logrotate_workers.j2
+    dest: /etc/logrotate.d/linux-platforms
+    owner: root
+    group: root
+    mode: "0644"

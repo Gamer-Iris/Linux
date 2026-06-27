@@ -1,0 +1,25 @@
+######################################################################################################################################################
+# ファイル   : argo-cd-apps-deployment3.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/06/27                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# Argo CD アプリ定義
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: secrets
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+spec:
+  project: default
+  source:
+    repoURL: "git@github.com:Gamer-Iris/Linux.git"
+    targetRevision: HEAD
+    path: "./platforms/kubernetes/apps/secrets"
+  destination:
+    server: "https://kubernetes.default.svc"
+    namespace: secrets

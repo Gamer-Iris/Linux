@@ -1,0 +1,79 @@
+######################################################################################################################################################
+# ファイル   : ceph-alerts.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/06/27                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# Ceph 監視ルール
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ceph-alerts
+  namespace: monitoring
+  labels:
+    app: kube-prometheus-stack
+    release: monitoring
+spec:
+  groups:
+    - name: ceph.health
+      interval: 60s
+      rules:
+        - alert: CephHealthWarn
+          expr: ceph_health_status == 1
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Ceph cluster health is WARN (30+ min)"
+            description: >-
+              Ceph cluster has been in HEALTH_WARN for 30+ minutes.
+              Check if rebalance / recovery is still in progress:
+              ceph status
+        - alert: CephHealthError
+          expr: ceph_health_status == 2
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Ceph cluster health is ERROR (10+ min)"
+            description: >-
+              Ceph cluster has been in HEALTH_ERR for 10+ minutes.
+              Immediate investigation required: ceph status && ceph health detail
+    - name: ceph.osd
+      interval: 60s
+      rules:
+        - alert: CephOSDDown
+          expr: ceph_osd_up == 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Ceph OSD is down (15+ min)"
+            description: >-
+              OSD {{ $labels.ceph_daemon }} has been down for 15+ minutes.
+              Check: ceph osd tree && ceph health detail
+        - alert: CephMultipleOSDDown
+          expr: count(ceph_osd_up == 0) > 1
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Multiple Ceph OSDs are down ({{ $value }})"
+            description: >-
+              {{ $value }} OSDs have been down for 5+ minutes.
+              Data availability is at risk: ceph osd tree && ceph health detail
+    - name: ceph.pg
+      interval: 60s
+      rules:
+        - alert: CephPGUnhealthy
+          expr: ceph_pg_active < ceph_pg_total
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Ceph PGs are unhealthy (30+ min)"
+            description: >-
+              {{ $value }} PGs are not active for 30+ minutes.
+              Check if rebalance/recovery is still running: ceph pg stat && ceph status

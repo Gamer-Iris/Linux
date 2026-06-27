@@ -1,0 +1,23 @@
+######################################################################################################################################################
+# ファイル   : cephfs-pvc-navidrome.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/06/27                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# Navidrome アプリデータ用 PVC
+# /data に mount し、DB / cache / 設定などの Navidrome 内部データを保存する。
+# 音楽ファイル用の /music は smb-pvc-navidrome-music.yml の TrueNAS SMB PVC を使用する。
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: navidrome-data-pvc
+  namespace: navidrome
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: cephfs-storage-class

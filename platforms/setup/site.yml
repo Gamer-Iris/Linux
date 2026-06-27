@@ -1,0 +1,79 @@
+######################################################################################################################################################
+# ファイル   : site.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/06/27                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# Ansible 実行 playbook
+- name: "Play 1: 共通ミドルウェアインストール（全ノード）"
+  hosts: all
+  become: true
+  serial: 1
+  gather_facts: true
+  tags: [common]
+  roles:
+    - role: common
+- name: "Play 2: k8s コントロールプレーン初期化"
+  hosts: control_plane
+  become: true
+  serial: 1
+  gather_facts: true
+  tags: [control-plane, secrets]
+  vars_files:
+    - "{{ settings_file | default(playbook_dir + '/../settings/settings_secret.yml') }}"
+  roles:
+    - role: control_plane
+      vars:
+        cp_phase: init
+- name: "Play 3: k8s ワーカーノード参加（kubeadm join）"
+  hosts: workers
+  become: true
+  gather_facts: true
+  tags: [workers, secrets]
+  roles:
+    - role: workers
+- name: "Play 4: 基盤アプリデプロイ（Argo CD / マニフェスト）"
+  hosts: control_plane
+  become: true
+  serial: 1
+  gather_facts: true
+  tags: [control-plane, secrets]
+  vars_files:
+    - "{{ settings_file | default(playbook_dir + '/../settings/settings_secret.yml') }}"
+  roles:
+    - role: control_plane
+      vars:
+        cp_phase: apps_base
+- name: "Play 5: Rook 外部クラスタ接続"
+  hosts: control_plane
+  become: true
+  serial: 1
+  gather_facts: true
+  tags: [control-plane]
+  vars_files:
+    - "{{ settings_file | default(playbook_dir + '/../settings/settings_secret.yml') }}"
+  roles:
+    - role: control_plane
+      vars:
+        cp_phase: rook
+- name: "Play 6: 追加アプリデプロイ（monitoring / minecraft）"
+  hosts: control_plane
+  become: true
+  serial: 1
+  gather_facts: true
+  tags: [control-plane]
+  vars_files:
+    - "{{ settings_file | default(playbook_dir + '/../settings/settings_secret.yml') }}"
+  roles:
+    - role: control_plane
+      vars:
+        cp_phase: apps_extras
+- name: "Play 7: ノード設定（crontab / logrotate）"
+  hosts: all
+  become: true
+  gather_facts: true
+  tags: [node-config]
+  roles:
+    - role: node_config

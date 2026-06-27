@@ -1,0 +1,71 @@
+# Secrets and credentials
+platforms/settings/settings_secret.yml
+platforms/setup/rook-ceph-env.sh
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+id_ed25519
+id_rsa
+argocd-deploy-key*
+argo.key
+argo
+argo.pub
+*.bak
+*.secret
+*secret*.tmp
+rclone.conf
+.config/rclone/
+sealed-secrets*.key
+sealed-secrets*.pem
+tls.key
+
+# Kubernetes local state
+kubeconfig
+*.kubeconfig
+.kube/
+
+# Ansible local state
+*.retry
+.ansible/
+fact_cache/
+platforms/setup/logs/
+
+# Java, Maven, Gradle, and Minecraft plugin artifacts
+target/
+build/
+*.class
+*.jar
+.gradle/
+
+# Backup and restore artifacts
+*.tgz
+*.tar.gz
+*.zip
+pre-restore-*
+restore-staging/
+restore-work/
+*.sha256
+*.checksum
+backup-report*
+restore-report*
+
+# Python
+*.pyc
+__pycache__/
+.pytest_cache/
+
+# Logs
+*.log
+logs/
+
+# Editor and tool local state
+/.vscode/
+/.claude/
+/.github/java-upgrade/
+
+# OS local files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,281 @@
+######################################################################################################################################################
+# ファイル   : apps_extras.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/06/27                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# 追加アプリ適用
+- name: ArgoCD server の LoadBalancer IP を取得
+  ansible.builtin.shell: |
+    kubectl -n {{ argocd_namespace }} get svc argocd-server \
+      -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _argocd_server
+  changed_when: false
+  until: _argocd_server.stdout | length > 0
+  retries: 12
+  delay: 10
+  when: inventory_hostname == groups['control_plane'][0]
+- name: ArgoCD にログイン（session 方式 / token 生成なし）
+  ansible.builtin.command: >
+    argocd login {{ _argocd_server.stdout }}
+    --username admin
+    --password {{ argocd.admin_password }}
+    --insecure --grpc-web
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  changed_when: false
+  no_log: true
+  when: inventory_hostname == groups['control_plane'][0]
+- name: ArgoCD 共通環境変数を fact に保存（session 使用 / ARGOCD_AUTH_TOKEN なし）
+  ansible.builtin.set_fact:
+    _argocd_env:
+      ARGOCD_SERVER: "{{ _argocd_server.stdout }}"
+      KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  when: inventory_hostname == groups['control_plane'][0]
+- name: deployment4 の ArgoCD Application 存在確認（monitoring + monitoring-rules の 2 つを確認）
+  ansible.builtin.shell: |
+    kubectl -n argocd get application monitoring monitoring-rules \
+      --no-headers 2>/dev/null | wc -l
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _d4_count
+  changed_when: false
+  when: inventory_hostname == groups['control_plane'][0]
+- name: "ArgoCD Application を適用（deployment4: monitoring / monitoring-rules / extras）"
+  ansible.builtin.command: >
+    kubectl apply -f {{ repo_root }}/platforms/kubernetes/argo-cd-apps-deployment4.yml
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _apply_d4
+  changed_when: >
+    'created' in _apply_d4.stdout or
+    'configured' in _apply_d4.stdout
+  when: inventory_hostname == groups['control_plane'][0]
+- name: secrets Application を手動 sync（app sync 前に Secret を作成）
+  ansible.builtin.command: argocd app sync secrets --timeout 180
+  become: false
+  environment: "{{ _argocd_env }}"
+  changed_when: false
+  register: _secrets_sync
+  retries: 3
+  delay: 15
+  until: _secrets_sync.rc == 0
+  when: inventory_hostname == groups['control_plane'][0]
+- name: app が参照する Secret が作成済みになるまで待機
+  ansible.builtin.shell: |
+    set -e
+    kubectl -n monitoring get secret alertmanager-discord-secret >/dev/null
+    kubectl -n cloudflare get secret cloudflare-secret >/dev/null
+    kubectl -n mariadb-phpmyadmin get secret mariadb-phpmyadmin-secret >/dev/null
+    kubectl -n minecraft get secret minecraft-secret >/dev/null
+    kubectl -n navidrome get secret navidrome-smb-secret >/dev/null
+    kubectl -n wordpress get secret wordpress-secret >/dev/null
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  changed_when: false
+  register: _app_secret_wait
+  retries: 12
+  delay: 10
+  until: _app_secret_wait.rc == 0
+  when: inventory_hostname == groups['control_plane'][0]
+- name: Navidrome SMB PV/PVC を placeholder 資材から直接 apply
+  ansible.builtin.shell: |
+    set -euo pipefail
+    SMB_IP={{ smb.ip | to_json }}
+    if [[ -z "${SMB_IP}" ]]; then
+      echo "ERROR: Navidrome music SMB PV/PVC には smb.ip が必要です。settings_secret.yml を確認してください。" >&2
+      exit 1
+    fi
+    if [[ ! "${SMB_IP}" =~ ^[A-Za-z0-9._:-]+$ ]]; then
+      echo "ERROR: smb.ip に template 置換で扱えない文字が含まれています: ${SMB_IP}" >&2
+      exit 1
+    fi
+
+    SMB_SOURCE="//${SMB_IP}/music"
+    SMB_TEMPLATE="{{ repo_root }}/platforms/kubernetes/apps/storages/smb-pvc-navidrome-music.yml"
+    if [[ ! -f "${SMB_TEMPLATE}" ]]; then
+      echo "ERROR: Navidrome SMB PV/PVC template が見つかりません: ${SMB_TEMPLATE}" >&2
+      exit 1
+    fi
+
+    kubectl get csidriver smb.csi.k8s.io >/dev/null
+    kubectl get namespace navidrome >/dev/null
+    kubectl -n navidrome get secret navidrome-smb-secret >/dev/null
+
+    existing_source="$(kubectl get pv navidrome-music-pv -o jsonpath='{.spec.csi.volumeAttributes.source}' 2>/dev/null || true)"
+    if [[ -n "${existing_source}" && "${existing_source}" != "${SMB_SOURCE}" ]]; then
+      echo "Navidrome SMB source が変更されています。navidrome-music-pvc / navidrome-music-pv を再作成します。"
+      kubectl -n navidrome delete pvc navidrome-music-pvc --ignore-not-found --wait=true
+      kubectl delete pv navidrome-music-pv --ignore-not-found --wait=true
+    fi
+
+    export SMB_IP
+    if command -v envsubst >/dev/null 2>&1; then
+      envsubst '${SMB_IP}' < "${SMB_TEMPLATE}" | kubectl apply -f -
+    else
+      sed 's|${SMB_IP}|'"${SMB_IP}"'|g' "${SMB_TEMPLATE}" | kubectl apply -f -
+    fi
+  args:
+    executable: /bin/bash
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _navidrome_smb_apply
+  changed_when: >
+    'created' in _navidrome_smb_apply.stdout or
+    'configured' in _navidrome_smb_apply.stdout or
+    'deleted' in _navidrome_smb_apply.stdout
+  when: inventory_hostname == groups['control_plane'][0]
+- name: 基本 app を手動 sync（Secret / PVC / CSI 待機後の収束保証）
+  ansible.builtin.command: >
+    argocd app sync {{ item }} --timeout 180
+  become: false
+  environment: "{{ _argocd_env }}"
+  register: _base_app_sync
+  changed_when: false
+  failed_when: false
+  loop:
+    - cloudflare
+    - coredns
+    - mariadb-phpmyadmin
+    - metallb
+    - minecraft
+    - navidrome
+    - wordpress
+  when: inventory_hostname == groups['control_plane'][0]
+- name: 基本 app sync 結果をログ出力
+  ansible.builtin.debug:
+    msg: "{{ item.item }} sync result: rc={{ item.rc }}"
+  loop: "{{ _base_app_sync.results | default([]) }}"
+  when: inventory_hostname == groups['control_plane'][0]
+- name: monitoring Application を非同期 sync（auto-sync の timing 保証のため）
+  ansible.builtin.command: >
+    argocd app sync monitoring --async
+  become: false
+  environment: "{{ _argocd_env }}"
+  register: _monitoring_sync
+  changed_when: false
+  failed_when: false
+  when: inventory_hostname == groups['control_plane'][0]
+- name: monitoring sync 結果をログ出力（timeout 時も続行）
+  ansible.builtin.debug:
+    msg: >
+      monitoring sync result: rc={{ _monitoring_sync.rc }}.
+      {% if _monitoring_sync.rc != 0 %}
+      WARNING: monitoring sync がタイムアウトまたは失敗しました。
+      ArgoCD が自動 sync を継続します。setup 終了後に以下で確認してください:
+        argocd app get monitoring
+        kubectl -n monitoring get pods
+      {% endif %}
+  when: inventory_hostname == groups['control_plane'][0]
+- name: monitoring Application の health 状態を確認（best-effort / timeout は WARN）
+  ansible.builtin.shell: |
+    argocd app get monitoring --output json 2>/dev/null \
+      | python3 -c "
+    import sys, json
+    d = json.load(sys.stdin)
+    status = d.get('status', {})
+    sync = status.get('sync', {}).get('status', 'Unknown')
+    health = status.get('health', {}).get('status', 'Unknown')
+    print(f'{sync}/{health}')
+    "
+  become: false
+  environment: "{{ _argocd_env }}"
+  register: _monitoring_status
+  changed_when: false
+  until: "'Synced/Healthy' in _monitoring_status.stdout"
+  retries: 60
+  delay: 10
+  failed_when: false
+  when: inventory_hostname == groups['control_plane'][0]
+- name: monitoring / Ceph CSI 診断ログを取得（monitoring が未 Healthy の場合）
+  ansible.builtin.shell: |
+    set +e
+    echo "### kubectl get pvc -A"
+    kubectl get pvc -A
+    echo
+    echo "### kubectl get csidriver"
+    kubectl get csidriver
+    echo
+    echo "### kubectl -n rook-ceph get pods"
+    kubectl -n rook-ceph get pods
+    echo
+    echo "### kubectl -n rook-ceph get deploy"
+    kubectl -n rook-ceph get deploy
+    echo
+    echo "### kubectl -n monitoring get pods"
+    kubectl -n monitoring get pods
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _monitoring_diagnostics
+  changed_when: false
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - _monitoring_sync.rc != 0 or 'Synced/Healthy' not in (_monitoring_status.stdout | default(''))
+- name: monitoring / Ceph CSI 診断ログを出力
+  ansible.builtin.debug:
+    msg: "{{ _monitoring_diagnostics.stdout }}"
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - _monitoring_diagnostics is defined
+    - _monitoring_diagnostics.stdout is defined
+- name: monitoring health 確認結果をログ出力
+  ansible.builtin.debug:
+    msg: >
+      monitoring status: {{ _monitoring_status.stdout | default('unknown') }}.
+      {% if 'Synced/Healthy' not in (_monitoring_status.stdout | default('')) %}
+      WARNING: monitoring がまだ Healthy になっていません（非同期デプロイ中の可能性）。
+      以下で状態を確認してください:
+        argocd app get monitoring
+        kubectl -n monitoring get pods
+        kubectl -n monitoring get pvc
+      Alertmanager / Grafana / Prometheus の起動には 5〜10 分かかることがあります。
+      {% else %}
+      monitoring は Synced/Healthy です。
+      {% endif %}
+  when: inventory_hostname == groups['control_plane'][0]
+- name: monitoring-rules Application を手動 sync（monitoring Healthy 後に実行）
+  ansible.builtin.command: >
+    argocd app sync monitoring-rules --timeout 120
+  become: false
+  environment: "{{ _argocd_env }}"
+  register: _monitoring_rules_sync
+  changed_when: false
+  failed_when: false
+  when: inventory_hostname == groups['control_plane'][0]
+- name: monitoring-rules sync 結果をログ出力（timeout 時も続行）
+  ansible.builtin.debug:
+    msg: >
+      monitoring-rules sync result: rc={{ _monitoring_rules_sync.rc }}.
+      {% if _monitoring_rules_sync.rc != 0 %}
+      WARNING: monitoring-rules sync に失敗しました。
+      monitoring app が Healthy になった後に ArgoCD が自動 sync します。
+      手動確認:
+        argocd app get monitoring-rules
+        kubectl -n monitoring get prometheusrule
+        kubectl -n monitoring get alertmanagerconfig
+      Discord 通知は alertmanager-discord-secret の設定後に有効になります。
+      {% else %}
+      monitoring-rules は sync 済みです。
+      {% endif %}
+  when: inventory_hostname == groups['control_plane'][0]
+- name: Grafana 初期パスワード取得コマンドを案内
+  ansible.builtin.debug:
+    msg: >
+      Grafana 初期パスワードは以下で確認できます（初回のみ）:
+        kubectl get secret -n monitoring monitoring-grafana \
+          -o jsonpath='{.data.admin-password}' | base64 -d
+      確認後は Grafana UI（http://{{ grafana_lb_ip | default('192.168.11.73') }}）から
+      「User Info → Change Password」でパスワードを変更してください。
+      ※ Ansible rerun では Grafana パスワードを変更しません。
+  when: inventory_hostname == groups['control_plane'][0]

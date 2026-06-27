@@ -1,0 +1,40 @@
+######################################################################################################################################################
+# ファイル   : github_api_version.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/06/27                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# GitHub REST API version 解決
+- name: GitHub REST API supported versions を取得（auto 時のみ）
+  check_mode: false
+  ansible.builtin.uri:
+    url: https://api.github.com/versions
+    method: GET
+    headers:
+      Accept: application/vnd.github+json
+    return_content: true
+  register: _github_api_versions
+  when:
+    - _resolved_github_api_version is not defined
+    - (github.api_version | default(github_api_version | default('auto'))) == 'auto'
+
+- name: GitHub REST API version を最新 supported version に設定（auto 時）
+  ansible.builtin.set_fact:
+    _resolved_github_api_version: "{{ (_github_api_versions.json | sort | last) }}"
+  when:
+    - _resolved_github_api_version is not defined
+    - (github.api_version | default(github_api_version | default('auto'))) == 'auto'
+
+- name: GitHub REST API version を設定値から設定（固定指定時）
+  ansible.builtin.set_fact:
+    _resolved_github_api_version: "{{ github.api_version | default(github_api_version) }}"
+  when:
+    - _resolved_github_api_version is not defined
+    - (github.api_version | default(github_api_version | default('auto'))) != 'auto'
+
+- name: GitHub REST API version 解決結果をログ出力
+  ansible.builtin.debug:
+    msg: "GitHub REST API version は {{ _resolved_github_api_version }} を使用します"
+  when: _resolved_github_api_version is defined

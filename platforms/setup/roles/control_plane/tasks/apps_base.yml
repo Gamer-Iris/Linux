@@ -1,0 +1,606 @@
+######################################################################################################################################################
+# ファイル   : apps_base.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/06/27                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# 基盤アプリ適用
+- name: ArgoCD Deploy Key パスを解決
+  ansible.builtin.set_fact:
+    argocd_deploy_key_path_resolved: >-
+      {{ argocd.deploy_key_path | regex_replace('^~', setup_user_home) }}
+- name: ArgoCD Deploy Key 解決パスを確認
+  ansible.builtin.debug:
+    msg: "argocd key path = {{ argocd_deploy_key_path_resolved }}"
+  when: inventory_hostname == groups['control_plane'][0]
+- name: ArgoCD Deploy Key が存在することを確認
+  ansible.builtin.stat:
+    path: "{{ argocd_deploy_key_path_resolved }}"
+  register: _argo_key
+  when: inventory_hostname == groups['control_plane'][0]
+- name: ArgoCD Deploy Key が見つからない場合は停止
+  ansible.builtin.fail:
+    msg: >
+      ArgoCD GitHub Deploy Key が見つかりません: {{ argocd.deploy_key_path }}
+      README.md の「Argo CD 事前準備」に従い ssh-keygen -t ed25519 -f ~/.ssh/argo を実行し、
+      argo.pub を GitHub Deploy Key に登録してから再実行してください。
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - not _argo_key.stat.exists
+- name: Helm をインストール
+  ansible.builtin.shell: |
+    set -eo pipefail
+    curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  args:
+    creates: /usr/local/bin/helm
+  when: inventory_hostname == groups['control_plane'][0]
+- name: GitHub REST API version を解決
+  ansible.builtin.include_tasks: github_api_version.yml
+  when: inventory_hostname == groups['control_plane'][0]
+- name: ArgoCD CLI をインストール（アーキテクチャ対応）
+  ansible.builtin.shell: |
+    set -eo pipefail
+    ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+    LATEST=$(curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: {{ _resolved_github_api_version }}" \
+            https://api.github.com/repos/argoproj/argo-cd/releases/latest \
+            | grep '"tag_name"' | cut -d'"' -f4)
+    if [ -z "${LATEST}" ]; then
+      echo "ERROR: GitHub API から ArgoCD 最新バージョンを取得できませんでした" >&2
+      exit 1
+    fi
+    curl -fsSL -o /tmp/argocd_download \
+      "https://github.com/argoproj/argo-cd/releases/download/${LATEST}/argocd-linux-${ARCH}"
+    chmod 755 /tmp/argocd_download
+    mv /tmp/argocd_download /usr/local/bin/argocd
+  args:
+    creates: /usr/local/bin/argocd
+  when: inventory_hostname == groups['control_plane'][0]
+- name: Helm リポジトリを追加・更新（metallb / argo）
+  ansible.builtin.shell: |
+    helm repo add metallb https://metallb.github.io/metallb 2>&1 | grep -v 'already exists' || true
+    helm repo add argo https://argoproj.github.io/argo-helm 2>&1 | grep -v 'already exists' || true
+    helm repo update
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  changed_when: false
+  when: inventory_hostname == groups['control_plane'][0]
+- name: Calico node が全 k8s node で Ready になるまで待機
+  ansible.builtin.shell: |
+    set -e
+    kubectl -n kube-system rollout status ds/calico-node --timeout=30s
+    kubectl -n kube-system wait pod \
+      -l k8s-app=calico-node \
+      --for=condition=Ready \
+      --timeout=30s
+    node_count="$(kubectl get nodes --no-headers | wc -l)"
+    set -- $(kubectl -n kube-system get ds calico-node -o jsonpath='{.status.desiredNumberScheduled} {.status.numberReady} {.status.numberAvailable} {.status.updatedNumberScheduled}')
+    desired="$1"
+    ready="$2"
+    available="$3"
+    updated="$4"
+    test "${desired}" = "${node_count}"
+    test "${ready}" = "${node_count}"
+    test "${available}" = "${node_count}"
+    test "${updated}" = "${node_count}"
+    echo "calico-node desired=${desired} ready=${ready} available=${available} updated=${updated} nodes=${node_count}"
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  changed_when: false
+  register: _calico_all_nodes_ready
+  retries: 30
+  delay: 5
+  until: _calico_all_nodes_ready.rc == 0
+  when: inventory_hostname == groups['control_plane'][0]
+- name: MetalLB operator を Helm でインストール（Helm repo latest chart を使用）
+  ansible.builtin.shell: |
+    set -eo pipefail
+    helm upgrade --install metallb metallb/metallb \
+      -n {{ metallb_namespace }} --create-namespace \
+      --set controller.tolerations[0].key=node-role.kubernetes.io/control-plane \
+      --set controller.tolerations[0].operator=Exists \
+      --set controller.tolerations[0].effect=NoSchedule \
+      --set controller.tolerations[1].key=node-role.kubernetes.io/master \
+      --set controller.tolerations[1].operator=Exists \
+      --set controller.tolerations[1].effect=NoSchedule \
+      --wait --timeout {{ helm_install_timeout }} 2>&1
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _metallb_helm
+  changed_when: >
+    'has been upgraded' in _metallb_helm.stdout or
+    'has been deployed' in _metallb_helm.stdout
+  when: inventory_hostname == groups['control_plane'][0]
+  retries: 2
+  delay: 30
+  until: _metallb_helm.rc == 0
+- name: インストールした MetalLB chart version をログ出力
+  ansible.builtin.shell: helm list -n {{ metallb_namespace }} -o json | python3 -c "import sys,json;d=json.load(sys.stdin);print(d[0]['chart'] if d else 'not found')"
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _metallb_installed_chart
+  changed_when: false
+  when: inventory_hostname == groups['control_plane'][0]
+- name: MetalLB chart version（ログ）
+  ansible.builtin.debug:
+    msg: "MetalLB installed: {{ _metallb_installed_chart.stdout }}"
+  when: inventory_hostname == groups['control_plane'][0]
+- name: MetalLB controller が Ready になるまで待機
+  ansible.builtin.command: >
+    kubectl -n {{ metallb_namespace }}
+    rollout status deploy/metallb-controller
+    --timeout={{ pod_ready_timeout }}s
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  changed_when: false
+  register: _metallb_controller_ready
+  retries: 3
+  delay: 20
+  until: _metallb_controller_ready.rc == 0
+  when: inventory_hostname == groups['control_plane'][0]
+- name: MetalLB webhook service / endpoints / endpointslice を待機
+  ansible.builtin.shell: |
+    python3 - <<'PY'
+    import json
+    import subprocess
+    import sys
+
+    namespace = "{{ metallb_namespace }}"
+    svc = json.loads(subprocess.check_output([
+        "kubectl", "-n", namespace, "get", "svc", "metallb-webhook-service", "-o", "json"
+    ]))
+    slices = json.loads(subprocess.check_output([
+        "kubectl", "-n", namespace, "get", "endpointslice",
+        "-l", "kubernetes.io/service-name=metallb-webhook-service", "-o", "json"
+    ]))
+
+    ports = svc.get("spec", {}).get("ports", [])
+    service_ip = svc.get("spec", {}).get("clusterIP", "")
+    if not service_ip or not ports:
+        sys.exit("MetalLB webhook service has no ClusterIP or ports")
+
+    service_port = ports[0].get("port")
+    target_port = ports[0].get("targetPort", service_port)
+    ready_endpoint = None
+    endpoint_port = None
+    for item in slices.get("items", []):
+        ports_by_name = {p.get("name"): p.get("port") for p in item.get("ports", [])}
+        ports_without_name = [p.get("port") for p in item.get("ports", [])]
+        for endpoint in item.get("endpoints", []):
+            if endpoint.get("conditions", {}).get("ready") is not True:
+                continue
+            addresses = endpoint.get("addresses", [])
+            if not addresses:
+                continue
+            endpoint_port = ports_by_name.get(ports[0].get("name")) or (ports_without_name[0] if ports_without_name else target_port)
+            ready_endpoint = {
+                "ip": addresses[0],
+                "node": endpoint.get("nodeName", "unknown"),
+                "port": endpoint_port,
+            }
+            break
+        if ready_endpoint:
+            break
+
+    if not ready_endpoint or not endpoint_port:
+        sys.exit("MetalLB webhook has no ready EndpointSlice endpoint")
+
+    print(json.dumps({
+        "service_ip": service_ip,
+        "service_port": int(service_port),
+        "target_port": target_port,
+        "endpoint_ip": ready_endpoint["ip"],
+        "endpoint_port": int(endpoint_port),
+        "endpoint_node": ready_endpoint["node"],
+        "endpointslice_count": len(slices.get("items", [])),
+    }, sort_keys=True))
+    PY
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  changed_when: false
+  register: _metallb_webhook_objects
+  retries: 30
+  delay: 5
+  until: _metallb_webhook_objects.rc == 0
+  when: inventory_hostname == groups['control_plane'][0]
+- name: MetalLB webhook service IP を取得
+  ansible.builtin.set_fact:
+    _metallb_webhook_info: "{{ _metallb_webhook_objects.stdout | from_json }}"
+  when: inventory_hostname == groups['control_plane'][0]
+- name: MetalLB webhook endpoint IP を取得
+  ansible.builtin.debug:
+    msg: >-
+      MetalLB webhook service={{ _metallb_webhook_info.service_ip }}:{{ _metallb_webhook_info.service_port }}
+      endpoint={{ _metallb_webhook_info.endpoint_ip }}:{{ _metallb_webhook_info.endpoint_port }}
+      endpoint_node={{ _metallb_webhook_info.endpoint_node }}
+      endpointslice_count={{ _metallb_webhook_info.endpointslice_count }}
+  when: inventory_hostname == groups['control_plane'][0]
+- name: Calico IPPool mode を取得
+  ansible.builtin.command: >
+    kubectl get ippool default-ipv4-ippool
+    -o jsonpath='cidr={.spec.cidr} ipipMode={.spec.ipipMode} vxlanMode={.spec.vxlanMode} natOutgoing={.spec.natOutgoing}'
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  changed_when: false
+  failed_when: false
+  register: _calico_ippool_mode
+  when: inventory_hostname == groups['control_plane'][0]
+- name: MetalLB webhook 到達性を全 k8s node から確認
+  ansible.builtin.shell: |
+    svc_ip="{{ _metallb_webhook_info.service_ip }}"
+    svc_port="{{ _metallb_webhook_info.service_port }}"
+    ep_ip="{{ _metallb_webhook_info.endpoint_ip }}"
+    ep_port="{{ _metallb_webhook_info.endpoint_port }}"
+
+    test_tcp() {
+      local label="$1"
+      local host="$2"
+      local port="$3"
+      local stderr_file="/tmp/metallb-webhook-${label}.err"
+      if timeout 5 bash -c "</dev/tcp/${host}/${port}" 2>"${stderr_file}"; then
+        printf '%s %s:%s OK\n' "${label}" "${host}" "${port}"
+        return 0
+      fi
+      local rc=$?
+      local err
+      err="$(tr '\n' ' ' <"${stderr_file}")"
+      if [ "${rc}" -eq 124 ]; then
+        err="timeout"
+      elif [ -z "${err}" ]; then
+        err="unknown"
+      fi
+      printf '%s %s:%s NG rc=%s error=%s\n' "${label}" "${host}" "${port}" "${rc}" "${err}"
+      return 1
+    }
+
+    service_rc=0
+    endpoint_rc=0
+    test_tcp service "${svc_ip}" "${svc_port}" || service_rc=$?
+    test_tcp endpoint "${ep_ip}" "${ep_port}" || endpoint_rc=$?
+    echo "endpoint_node={{ _metallb_webhook_info.endpoint_node }} checked_from=$(hostname)"
+    test "${service_rc}" -eq 0
+    test "${endpoint_rc}" -eq 0
+  become: true
+  delegate_to: "{{ item }}"
+  loop: "{{ (groups['control_plane'] + groups['workers']) | unique }}"
+  changed_when: false
+  register: _metallb_webhook_reachability
+  when: inventory_hostname == groups['control_plane'][0]
+  failed_when: false
+  retries: 30
+  delay: 5
+  until: _metallb_webhook_reachability.rc == 0
+- name: MetalLB webhook 到達性エラーの案内
+  ansible.builtin.fail:
+    msg: |
+      MetalLB webhook service/endpoint に到達できません。
+      Service: {{ _metallb_webhook_info.service_ip }}:{{ _metallb_webhook_info.service_port }}
+      Endpoint: {{ _metallb_webhook_info.endpoint_ip }}:{{ _metallb_webhook_info.endpoint_port }}
+      Endpoint node: {{ _metallb_webhook_info.endpoint_node }}
+      Calico IPPool: {{ _calico_ippool_mode.stdout | default('unknown') }}
+
+      Failed checks:
+      {% for result in (_metallb_webhook_reachability.results | default([])) if (result.rc | default(0)) != 0 %}
+      - failed host={{ result.item }}
+        {{ result.stdout | default('no stdout') | indent(2) }}
+        stderr={{ result.stderr | default('') }}
+      {% endfor %}
+
+      次に確認してください:
+      - Service IP だけ失敗する場合: kube-proxy / Service iptables ルール / nft backend
+      - Endpoint IP が同一 node でも失敗する場合: controller listen / targetPort / Pod readiness
+      - Endpoint IP が node 間だけ失敗する場合: Calico VXLAN UDP/4789 / UFW routed traffic / Proxmox VM firewall / MTU
+      - Calico ipipMode が Never 以外の場合だけ IPIP protocol 4
+      - Felix ChecksumOffloadBroken=true
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - (_metallb_webhook_reachability.results | default([]) | selectattr('rc', 'ne', 0) | list | length) > 0
+- name: MetalLB IP Pool server-side dry-run で admission webhook を確認
+  ansible.builtin.command: >
+    kubectl apply --dry-run=server
+    -f {{ repo_root }}/platforms/kubernetes/apps/metallb/metallb-config.yml
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _metallb_config_dry_run
+  changed_when: false
+  when: inventory_hostname == groups['control_plane'][0]
+  retries: 30
+  delay: 5
+  until: _metallb_config_dry_run.rc == 0
+- name: MetalLB IP Pool 設定を適用
+  ansible.builtin.command: >
+    kubectl apply -f {{ repo_root }}/platforms/kubernetes/apps/metallb/metallb-config.yml
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _metallb_config
+  changed_when: >
+    'created' in _metallb_config.stdout or
+    'configured' in _metallb_config.stdout
+  when: inventory_hostname == groups['control_plane'][0]
+  retries: 3
+  delay: 10
+  until: _metallb_config.rc == 0
+- name: ArgoCD を Helm でインストール（Helm repo latest chart を使用）
+  ansible.builtin.shell: |
+    set -eo pipefail
+    helm upgrade --install argocd argo/argo-cd \
+      -n {{ argocd_namespace }} --create-namespace \
+      --wait --timeout {{ helm_install_timeout }} \
+      -f {{ repo_root }}/platforms/kubernetes/argo-cd-custom.yml 2>&1
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _argocd_helm
+  changed_when: >
+    'has been upgraded' in _argocd_helm.stdout or
+    'has been deployed' in _argocd_helm.stdout
+  when: inventory_hostname == groups['control_plane'][0]
+  retries: 2
+  delay: 30
+  until: _argocd_helm.rc == 0
+- name: インストールした ArgoCD chart version をログ出力
+  ansible.builtin.shell: helm list -n {{ argocd_namespace }} -o json | python3 -c "import sys,json;d=json.load(sys.stdin);print(d[0]['chart'] if d else 'not found')"
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _argocd_installed_chart
+  changed_when: false
+  when: inventory_hostname == groups['control_plane'][0]
+- name: ArgoCD chart version（ログ）
+  ansible.builtin.debug:
+    msg: "ArgoCD installed: {{ _argocd_installed_chart.stdout }}"
+  when: inventory_hostname == groups['control_plane'][0]
+- name: ArgoCD server の LoadBalancer IP が割り当てられるまで待機
+  ansible.builtin.shell: |
+    kubectl -n {{ argocd_namespace }} get svc argocd-server \
+      -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _argocd_ip_result
+  changed_when: false
+  until: _argocd_ip_result.stdout | length > 0
+  retries: 30
+  delay: 10
+  when: inventory_hostname == groups['control_plane'][0]
+- name: ArgoCD サーバーアドレスを fact に保存
+  ansible.builtin.set_fact:
+    _argocd_server: "{{ _argocd_ip_result.stdout }}"
+  when: inventory_hostname == groups['control_plane'][0]
+- name: ArgoCD 初期管理者パスワードを取得
+  ansible.builtin.shell: |
+    kubectl -n {{ argocd_namespace }} get secret argocd-initial-admin-secret \
+      -o jsonpath="{.data.password}" 2>/dev/null | base64 -d || echo ""
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _argocd_initial_pw
+  changed_when: false
+  no_log: true
+  when: inventory_hostname == groups['control_plane'][0]
+- name: ArgoCD 管理者パスワードを設定
+  ansible.builtin.shell: |
+    set -e
+    ARGOCD_SERVER="{{ _argocd_server }}"
+    if argocd login "${ARGOCD_SERVER}" \
+        --username admin \
+        --password "{{ argocd.admin_password }}" \
+        --insecure --grpc-web 2>/dev/null; then
+      echo "ALREADY_CONFIGURED"
+      exit 0
+    fi
+    INITIAL_PW="{{ _argocd_initial_pw.stdout }}"
+    if [ -z "${INITIAL_PW}" ]; then
+      echo "ERROR: 新パスワードでのログイン失敗かつ初期 Secret が見つかりません" >&2
+      exit 1
+    fi
+    argocd login "${ARGOCD_SERVER}" \
+      --username admin \
+      --password "${INITIAL_PW}" \
+      --insecure --grpc-web
+    argocd account update-password \
+      --current-password "${INITIAL_PW}" \
+      --new-password "{{ argocd.admin_password }}"
+    echo "PASSWORD_CHANGED"
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _argocd_login
+  changed_when: "'PASSWORD_CHANGED' in _argocd_login.stdout"
+  no_log: true
+  when: inventory_hostname == groups['control_plane'][0]
+- name: ArgoCD 共通環境変数を fact に保存（session 使用 / ARGOCD_AUTH_TOKEN なし）
+  ansible.builtin.set_fact:
+    _argocd_env:
+      ARGOCD_SERVER: "{{ _argocd_server }}"
+      KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  when: inventory_hostname == groups['control_plane'][0]
+- name: GitHub リポジトリが ArgoCD に登録済みか確認
+  ansible.builtin.shell: |
+    argocd repo list --output json 2>/dev/null \
+      | python3 -c "
+    import json, sys
+    repos = json.load(sys.stdin)
+    print('present' if any('Gamer-Iris/Linux' in r.get('repo', '') for r in repos) else 'absent')
+    "
+  become: false
+  environment: "{{ _argocd_env }}"
+  register: _repo_status
+  changed_when: false
+  failed_when: false
+  when: inventory_hostname == groups['control_plane'][0]
+- name: GitHub SSH リポジトリを ArgoCD に登録
+  ansible.builtin.shell: |
+    argocd repo add git@github.com:Gamer-Iris/Linux.git \
+      --ssh-private-key-path "{{ argocd_deploy_key_path_resolved }}"
+  become: false
+  environment: "{{ _argocd_env }}"
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - _repo_status.stdout.strip() == 'absent'
+- name: deployment1 の ArgoCD Application 存在確認
+  ansible.builtin.shell: |
+    kubectl -n argocd get application namespaces csi-driver-smb storages \
+      --no-headers 2>/dev/null | wc -l
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _d1_count
+  changed_when: false
+  when: inventory_hostname == groups['control_plane'][0]
+- name: ArgoCD Application を適用（namespaces / csi-driver-smb / storages）
+  ansible.builtin.command: >
+    kubectl apply -f {{ repo_root }}/platforms/kubernetes/argo-cd-apps-deployment1.yml
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _apply_d1
+  changed_when: >
+    'created' in _apply_d1.stdout or
+    'configured' in _apply_d1.stdout
+  when: inventory_hostname == groups['control_plane'][0]
+- name: deployment2 の ArgoCD Application 存在確認
+  ansible.builtin.shell: |
+    kubectl -n argocd get application sealed-secrets rook-release \
+      --no-headers 2>/dev/null | wc -l
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _d2_count
+  changed_when: false
+  when: inventory_hostname == groups['control_plane'][0]
+- name: ArgoCD Application を適用（sealed-secrets / rook-release）
+  ansible.builtin.command: >
+    kubectl apply -f {{ repo_root }}/platforms/kubernetes/argo-cd-apps-deployment2.yml
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _apply_d2
+  changed_when: >
+    'created' in _apply_d2.stdout or
+    'configured' in _apply_d2.stdout
+  when: inventory_hostname == groups['control_plane'][0]
+- name: namespaces Application を手動 sync
+  ansible.builtin.command: argocd app sync namespaces --timeout 120
+  become: false
+  environment: "{{ _argocd_env }}"
+  changed_when: false
+  register: _namespaces_sync
+  retries: 3
+  delay: 15
+  until: _namespaces_sync.rc == 0
+  when: inventory_hostname == groups['control_plane'][0]
+- name: csi-driver-smb Application を手動 sync
+  ansible.builtin.command: argocd app sync csi-driver-smb --timeout 180
+  become: false
+  environment: "{{ _argocd_env }}"
+  changed_when: false
+  register: _csi_driver_smb_sync
+  retries: 3
+  delay: 15
+  until: _csi_driver_smb_sync.rc == 0
+  when: inventory_hostname == groups['control_plane'][0]
+- name: sealed-secrets Application を手動 sync
+  ansible.builtin.command: argocd app sync sealed-secrets --timeout 180
+  become: false
+  environment: "{{ _argocd_env }}"
+  changed_when: false
+  register: _sealed_secrets_sync
+  retries: 3
+  delay: 15
+  until: _sealed_secrets_sync.rc == 0
+  when: inventory_hostname == groups['control_plane'][0]
+- name: sealed-secrets コントローラーが Ready になるまで待機
+  ansible.builtin.shell: |
+    kubectl -n {{ sealed_secrets_namespace }} wait pod \
+      -l app.kubernetes.io/name=sealed-secrets \
+      --for=condition=Ready \
+      --timeout={{ pod_ready_timeout }}s
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  changed_when: false
+  register: _sealed_secrets_ready
+  retries: 5
+  delay: 20
+  until: _sealed_secrets_ready.rc == 0
+  when: inventory_hostname == groups['control_plane'][0]
+- name: SealedSecret manifest を settings_secret.yml から生成
+  ansible.builtin.include_tasks: app_secrets.yml
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - setup_mode | default('') == 'secrets'
+- name: secrets Application を作成（SealedSecret は Git push 後に sync）
+  ansible.builtin.command: >
+    kubectl apply -f {{ repo_root }}/platforms/kubernetes/argo-cd-apps-deployment3.yml
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _apply_d3
+  changed_when: >
+    'created' in _apply_d3.stdout or
+    'configured' in _apply_d3.stdout
+  when: inventory_hostname == groups['control_plane'][0]
+- name: secrets mode は SealedSecret manifest 生成後に停止
+  ansible.builtin.meta: end_play
+  when:
+    - inventory_hostname == groups['control_plane'][0]
+    - setup_mode | default('') == 'secrets'
+- name: rook-release Application を手動 sync
+  ansible.builtin.command: argocd app sync rook-release --timeout 180
+  become: false
+  environment: "{{ _argocd_env }}"
+  changed_when: false
+  register: _rook_release_sync
+  retries: 3
+  delay: 15
+  until: _rook_release_sync.rc == 0
+  when: inventory_hostname == groups['control_plane'][0]
+- name: rook-ceph-operator を再起動して ConfigMap 変更を反映
+  ansible.builtin.command: kubectl -n {{ rook_namespace }} rollout restart deployment/rook-ceph-operator
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  register: _rook_operator_restart
+  changed_when: "'restarted' in _rook_operator_restart.stdout"
+  when: inventory_hostname == groups['control_plane'][0]
+- name: rook-ceph-operator の再起動完了を待機
+  ansible.builtin.command: >
+    kubectl -n {{ rook_namespace }} rollout status deployment/rook-ceph-operator
+    --timeout={{ pod_ready_timeout }}s
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  changed_when: false
+  register: _rook_operator_rollout
+  retries: 3
+  delay: 20
+  until: _rook_operator_rollout.rc == 0
+  when: inventory_hostname == groups['control_plane'][0]
+- name: rook-ceph-operator が Ready になるまで待機
+  ansible.builtin.shell: |
+    kubectl -n {{ rook_namespace }} wait pod \
+      -l app=rook-ceph-operator \
+      --for=condition=Ready \
+      --timeout={{ pod_ready_timeout }}s
+  become: false
+  environment:
+    KUBECONFIG: "{{ setup_user_home }}/.kube/config"
+  changed_when: false
+  register: _rook_ready
+  retries: 5
+  delay: 20
+  until: _rook_ready.rc == 0
+  when: inventory_hostname == groups['control_plane'][0]

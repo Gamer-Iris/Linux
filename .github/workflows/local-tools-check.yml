@@ -1,0 +1,42 @@
+######################################################################################################################################################
+# ファイル   : local-tools-check.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/06/27                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# local CLI の latest 検知 workflow（自動更新はしない）
+name: Local Tools Check
+on:
+  schedule:
+    - cron: "0 18 * * 0"
+  workflow_dispatch:
+  push:
+    paths:
+      - "platforms/setup/tools/**"
+      - ".github/workflows/local-tools-check.yml"
+      - "docs/tool-update-policy.md"
+      - "README.md"
+      - "platforms/setup/validate/validate_readme.sh"
+  pull_request:
+    paths:
+      - "platforms/setup/tools/**"
+      - ".github/workflows/local-tools-check.yml"
+      - "docs/tool-update-policy.md"
+      - "README.md"
+      - "platforms/setup/validate/validate_readme.sh"
+permissions:
+  contents: read
+jobs:
+  check:
+    name: Check GitHub Releases local tools
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check local tool versions
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash platforms/setup/tools/check-local-tools.sh
+      - name: Check manual updater syntax
+        run: bash -n platforms/setup/tools/update-local-tools.sh

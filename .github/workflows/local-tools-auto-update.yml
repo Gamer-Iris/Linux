@@ -1,0 +1,51 @@
+######################################################################################################################################################
+# ファイル   : local-tools-auto-update.yml
+# 引数       : なし
+# 復帰値     : 0 （正常終了）
+#            : 1 （異常終了）
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/06/27                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+
+name: Local Tools Auto Update
+
+on:
+  schedule:
+    - cron: "15 18 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-tools-auto-update
+  cancel-in-progress: false
+
+jobs:
+  update-local-tools:
+    name: Update GitHub Releases local tools
+    runs-on: [self-hosted]
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Check local tools checker syntax
+        run: bash -n platforms/setup/tools/check-local-tools.sh
+
+      - name: Check local tools updater syntax
+        run: bash -n platforms/setup/tools/update-local-tools.sh
+
+      - name: Show local tools before update
+        run: bash platforms/setup/tools/check-local-tools.sh
+
+      - name: Apply local tools update
+        run: bash platforms/setup/tools/update-local-tools.sh --apply
+
+      - name: Show local tools after update
+        if: always()
+        run: bash platforms/setup/tools/check-local-tools.sh

@@ -1,0 +1,606 @@
+######################################################################################################################################################
+# ファイル   : minecraft-maintenance.yml
+#
+# ----------------------------------------------------------------------------------------------------------------------------------------------------
+# 【修正履歴】
+# V-001      : 2026/06/27                 Gamer-Iris   新規作成
+#
+######################################################################################################################################################
+# Minecraft 手動メンテナンス
+name: Minecraft Maintenance
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "実行する Minecraft メンテナンス作業"
+        required: true
+        type: choice
+        options:
+          - bluemap-reload
+          - pvc-emergency-start
+          - pvc-emergency-finish
+        default: bluemap-reload
+      confirm_pvc_maintenance:
+        description: "PVC 緊急メンテ時のみ「I understand PVC contents can be modified or deleted」を入力"
+        required: false
+        type: string
+        default: ""
+permissions:
+  contents: read
+concurrency:
+  group: minecraft-operations
+  cancel-in-progress: false
+jobs:
+  run:
+    runs-on: [self-hosted]
+    environment:
+      name: production
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run selected Minecraft maintenance task
+        env:
+          INPUT_TASK: ${{ github.event.inputs.task }}
+          INPUT_CONFIRM_PVC_MAINTENANCE: ${{ github.event.inputs.confirm_pvc_maintenance }}
+          PVC_MAINTENANCE_NODE_SELECTOR: ${{ vars.MINECRAFT_PVC_MAINTENANCE_NODE_SELECTOR }}
+        run: |
+          set -euo pipefail
+          DISABLED_TASK_MESSAGE="このtaskは安全化未完了のためPhase 0では無効です。"
+          run_cronjob_once() {
+            CRONJOB="$1"
+            TIMEOUT="$2"
+            JOB_NAME="${CRONJOB}-${GITHUB_RUN_ID}"
+            kubectl -n minecraft create job "${JOB_NAME}" --from="cronjob/${CRONJOB}"
+            if kubectl -n minecraft wait --for=condition=complete "job/${JOB_NAME}" --timeout="${TIMEOUT}"; then
+              kubectl -n minecraft logs "job/${JOB_NAME}"
+            else
+              kubectl -n minecraft logs "job/${JOB_NAME}" || true
+              kubectl -n minecraft delete job "${JOB_NAME}" --ignore-not-found=true --wait=true >/dev/null 2>&1 || true
+              echo "メンテナンス Job が失敗しました: ${JOB_NAME}" >&2
+              exit 1
+            fi
+          }
+          scale_minecraft() {
+            case "$1" in
+              0) stop_minecraft ;;
+              1) start_minecraft ;;
+              *) echo "未対応の Minecraft replica 数です: $1" >&2; exit 1 ;;
+            esac
+          }
+          append_script_log_summary() {
+            NAME="$1"
+            LOG_FILE="$2"
+            RC="$3"
+            {
+              echo "### ${NAME}"
+              echo ""
+              echo "終了コード: ${RC}"
+              echo ""
+              echo "\`\`\`"
+              tail -n 160 "${LOG_FILE}" || true
+              echo "\`\`\`"
+              echo ""
+            } >> "${GITHUB_STEP_SUMMARY}"
+          }
+          run_minecraft_script() {
+            NAME="$1"
+            SCRIPT_PATH="$2"
+            LOG_FILE="${RUNNER_TEMP:-/tmp}/${NAME}-${GITHUB_RUN_ID}.log"
+            set +e
+            bash "${SCRIPT_PATH}" 2>&1 | tee "${LOG_FILE}"
+            RC="${PIPESTATUS[0]}"
+            set -e
+            append_script_log_summary "${NAME}" "${LOG_FILE}" "${RC}"
+            return "${RC}"
+          }
+          stop_minecraft() {
+            if [ -f "${GITHUB_WORKSPACE}/platforms/scripts/minecraft/minecraft_stop.sh" ]; then
+              run_minecraft_script minecraft_stop "${GITHUB_WORKSPACE}/platforms/scripts/minecraft/minecraft_stop.sh"
+            else
+              echo "minecraft_stop.sh が見つかりません。PVC emergency maintenance には既存の停止 script が必要です。" >&2
+              exit 1
+            fi
+          }
+          start_minecraft() {
+            if [ -f "${GITHUB_WORKSPACE}/platforms/scripts/minecraft/minecraft_start.sh" ]; then
+              run_minecraft_script minecraft_start "${GITHUB_WORKSPACE}/platforms/scripts/minecraft/minecraft_start.sh"
+            else
+              echo "minecraft_start.sh が見つかりません。PVC emergency maintenance には既存の起動 script が必要です。" >&2
+              exit 1
+            fi
+          }
+          wait_pods_removed() {
+            TIMEOUT_SECONDS="${1:-300}"
+            WAITED_SECONDS=0
+            for APP in minecraft-proxy minecraft-server1 minecraft-server2; do
+              while [ "$(kubectl -n minecraft get pod -l "app=${APP}" --no-headers 2>/dev/null | wc -l)" != "0" ]; do
+                if [ "${WAITED_SECONDS}" -ge "${TIMEOUT_SECONDS}" ]; then
+                  POD_REMOVAL_TIMED_OUT=1
+                  echo "Minecraft Pod の終了待機がタイムアウトしました: ${APP}" >&2
+                  kubectl -n minecraft get pods -l "app in (minecraft-proxy,minecraft-server1,minecraft-server2)" -o wide >&2 || true
+                  {
+                    echo "## Minecraft PVC emergency maintenance timeout"
+                    echo ""
+                    echo "Minecraft Pod の終了待機がタイムアウトしました。"
+                    echo ""
+                    echo "- Minecraft は停止途中または停止中の可能性があります。"
+                    echo "- PVC emergency maintenance Pod は作成されていません。"
+                    echo "- PVC にはまだ触れていません。"
+                    echo "- 状態確認後、復旧には \`pvc-emergency-finish\` または手動のDeployment確認を使用してください。"
+                    echo ""
+                    echo "残っているPod:"
+                    echo "\`\`\`"
+                    kubectl -n minecraft get pods -l "app in (minecraft-proxy,minecraft-server1,minecraft-server2)" -o wide || true
+                    echo "\`\`\`"
+                  } >> "${GITHUB_STEP_SUMMARY}"
+                  exit 1
+                fi
+                echo "${APP} の Pod 終了を待っています"
+                sleep 5
+                WAITED_SECONDS=$((WAITED_SECONDS + 5))
+              done
+            done
+          }
+          wait_minecraft_ready() {
+            kubectl -n minecraft rollout status deployment/minecraft-proxy --timeout=300s
+            kubectl -n minecraft rollout status deployment/minecraft-server1 --timeout=300s
+            kubectl -n minecraft rollout status deployment/minecraft-server2 --timeout=300s
+            kubectl -n minecraft wait pod \
+              -l "app in (minecraft-proxy,minecraft-server1,minecraft-server2)" \
+              --for=condition=Ready \
+              --timeout=300s
+          }
+          assert_pvc_maintenance_confirmed() {
+            if [ "${INPUT_CONFIRM_PVC_MAINTENANCE}" != "I understand PVC contents can be modified or deleted" ]; then
+              echo "PVC 内容を変更・削除できる危険操作です。confirm_pvc_maintenance には正確に次の文字列を入力してください: I understand PVC contents can be modified or deleted" >&2
+              exit 1
+            fi
+          }
+          pvc_maintenance_pod_exists() {
+            KUBECTL_ERR="$(mktemp)"
+            if ! RESULT="$(kubectl -n minecraft get pods \
+              --field-selector metadata.name=minecraft-pvc-emergency-maintenance \
+              -o name 2>"${KUBECTL_ERR}")"; then
+              echo "minecraft-pvc-emergency-maintenance の状態を確認できません。fail-closedで停止します。" >&2
+              cat "${KUBECTL_ERR}" >&2
+              rm -f "${KUBECTL_ERR}"
+              exit 1
+            fi
+            rm -f "${KUBECTL_ERR}"
+            [ -n "${RESULT}" ]
+          }
+          ensure_pvc_maintenance_pod_absent() {
+            if pvc_maintenance_pod_exists; then
+              echo "minecraft-pvc-emergency-maintenance は既に存在します。先に pvc-emergency-finish を実行してください。" >&2
+              exit 1
+            fi
+          }
+          ensure_pvc_maintenance_pod_present() {
+            if ! pvc_maintenance_pod_exists; then
+              echo "minecraft-pvc-emergency-maintenance が存在しません。PVC emergency maintenance は開始されていません。" >&2
+              exit 1
+            fi
+          }
+          ensure_no_pvc_maintenance_lock() {
+            if pvc_maintenance_pod_exists; then
+              echo "PVC emergency maintenance 中のため、このtaskは実行できません。先に pvc-emergency-finish を実行してください。" >&2
+              exit 1
+            fi
+          }
+          print_minecraft_state() {
+            echo "Deployment状態:" >&2
+            kubectl -n minecraft get deployment minecraft-proxy minecraft-server1 minecraft-server2 -o wide >&2 || true
+            echo "Minecraft Pod状態:" >&2
+            kubectl -n minecraft get pods -l "app in (minecraft-proxy,minecraft-server1,minecraft-server2)" -o wide >&2 || true
+            echo "関連Job状態:" >&2
+            kubectl -n minecraft get jobs -o wide | grep -E 'minecraft-resource-refresh|restore|backup-export' >&2 || true
+            echo "maintenance label付きPod状態:" >&2
+            kubectl -n minecraft get pods -l 'maintenance.gamer-iris.com/type' -o wide >&2 || true
+          }
+          ensure_no_active_pvc_maintenance_work() {
+            ALL_ACTIVE_JOBS="$(kubectl -n minecraft get jobs -o jsonpath='{range .items[?(@.status.active>0)]}{.metadata.name}{"\n"}{end}')"
+            ACTIVE_JOBS="$(printf '%s\n' "${ALL_ACTIVE_JOBS}" | grep -E 'minecraft-resource-refresh|restore|backup-export' || true)"
+            if [ -n "${ACTIVE_JOBS}" ]; then
+              echo "PVCを変更する可能性があるJobが実行中のため、自動起動しません。" >&2
+              echo "${ACTIVE_JOBS}" >&2
+              print_minecraft_state
+              exit 1
+            fi
+            MAINTENANCE_PODS_JSONPATH='{range .items[?(@.status.phase!="Succeeded")]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}'
+            ACTIVE_MAINTENANCE_PODS="$(kubectl -n minecraft get pods -l 'maintenance.gamer-iris.com/type' \
+              -o jsonpath="${MAINTENANCE_PODS_JSONPATH}" 2>/dev/null || echo "__kubectl_failed__")"
+            if [ "${ACTIVE_MAINTENANCE_PODS}" = "__kubectl_failed__" ]; then
+              echo "maintenance Pod状態を確認できないため、自動起動しません。" >&2
+              print_minecraft_state
+              exit 1
+            fi
+            if [ -n "${ACTIVE_MAINTENANCE_PODS}" ]; then
+              echo "PVC maintenance Podが残っているため、自動起動しません。" >&2
+              echo "${ACTIVE_MAINTENANCE_PODS}" >&2
+              print_minecraft_state
+              exit 1
+            fi
+          }
+          ensure_no_minecraft_pods_remaining() {
+            REMAINING_PODS_JSONPATH='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}'
+            REMAINING_PODS="$(kubectl -n minecraft get pods -l "app in (minecraft-proxy,minecraft-server1,minecraft-server2)" \
+              -o jsonpath="${REMAINING_PODS_JSONPATH}" 2>/dev/null || echo "__kubectl_failed__")"
+            if [ "${REMAINING_PODS}" = "__kubectl_failed__" ]; then
+              echo "Minecraft Pod状態を確認できないため、自動起動しません。" >&2
+              print_minecraft_state
+              exit 1
+            fi
+            if [ -n "${REMAINING_PODS}" ]; then
+              echo "Minecraft Podが残っているため、自動起動しません。" >&2
+              echo "${REMAINING_PODS}" >&2
+              print_minecraft_state
+              exit 1
+            fi
+          }
+          ensure_no_target_pvc_users() {
+            MODE="${1:-strict}"
+            TARGET_PVCS="minecraft-proxy-pvc minecraft-server1-pvc minecraft-server2-pvc"
+            PVC_USERS_JSONPATH='{range .items[*]}{.metadata.name}{"|"}{.status.phase}{"|"}'
+            PVC_USERS_JSONPATH="${PVC_USERS_JSONPATH}"'{range .metadata.ownerReferences[*]}{.kind}{"/"}{.name}{","}{end}{"|"}'
+            PVC_USERS_JSONPATH="${PVC_USERS_JSONPATH}"'{range .spec.volumes[*]}{.persistentVolumeClaim.claimName}{","}{end}{"\n"}{end}'
+            PVC_USER_ROWS="$(kubectl -n minecraft get pods -o jsonpath="${PVC_USERS_JSONPATH}")"
+            while IFS='|' read -r POD_NAME POD_PHASE OWNER_REFS PVC_LIST; do
+              [ -n "${POD_NAME}" ] || continue
+              if [ "${MODE}" = "allow-minecraft" ]; then
+                case "${POD_NAME}" in
+                  minecraft-proxy-*|minecraft-server1-*|minecraft-server2-*)
+                    continue
+                    ;;
+                esac
+              fi
+              for PVC_NAME in ${TARGET_PVCS}; do
+                case ",${PVC_LIST}," in
+                  *",${PVC_NAME},"*)
+                    echo "PodがMinecraft PVCを使用中のため、自動起動しません。" >&2
+                    echo "Pod=${POD_NAME} phase=${POD_PHASE} pvc=${PVC_NAME} owner=${OWNER_REFS}" >&2
+                    print_minecraft_state
+                    exit 1
+                    ;;
+                esac
+              done
+            done <<EOF_PVC_USERS
+          ${PVC_USER_ROWS}
+          EOF_PVC_USERS
+          }
+          ensure_deployments_stopped() {
+            for DEPLOY in minecraft-proxy minecraft-server1 minecraft-server2; do
+              REPLICAS="$(kubectl -n minecraft get deployment "${DEPLOY}" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "__kubectl_failed__")"
+              if [ "${REPLICAS}" = "__kubectl_failed__" ]; then
+                echo "${DEPLOY} のreplica状態を確認できないため、自動起動しません。" >&2
+                print_minecraft_state
+                exit 1
+              fi
+              if [ -n "${REPLICAS}" ] && [ "${REPLICAS}" != "0" ]; then
+                echo "${DEPLOY} は意図的な停止状態ではありません。状態が曖昧なため自動起動しません。" >&2
+                print_minecraft_state
+                exit 1
+              fi
+            done
+          }
+          ensure_minecraft_deployments_running() {
+            for DEPLOY in minecraft-proxy minecraft-server1 minecraft-server2; do
+              REPLICAS="$(kubectl -n minecraft get deployment "${DEPLOY}" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "")"
+              if [ -z "${REPLICAS}" ] || [ "${REPLICAS}" = "0" ]; then
+                echo "${DEPLOY} が停止中のため、このtaskは実行できません。" >&2
+                exit 1
+              fi
+            done
+          }
+          deployment_ready_check() {
+            DEPLOY="$1"
+            DESIRED="$(kubectl -n minecraft get deployment "${DEPLOY}" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "")"
+            READY="$(kubectl -n minecraft get deployment "${DEPLOY}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "")"
+            AVAILABLE="$(kubectl -n minecraft get deployment "${DEPLOY}" -o jsonpath='{.status.availableReplicas}' 2>/dev/null || echo "")"
+            READY="${READY:-0}"
+            AVAILABLE="${AVAILABLE:-0}"
+            if [ -z "${DESIRED}" ] || [ "${DESIRED}" = "0" ]; then
+              return 1
+            fi
+            if [ "${READY}" -lt "${DESIRED}" ] || [ "${AVAILABLE}" -lt "${DESIRED}" ]; then
+              return 1
+            fi
+            return 0
+          }
+          deployment_ready() {
+            DEPLOY="$1"
+            DESIRED="$(kubectl -n minecraft get deployment "${DEPLOY}" -o jsonpath='{.spec.replicas}')"
+            READY="$(kubectl -n minecraft get deployment "${DEPLOY}" -o jsonpath='{.status.readyReplicas}')"
+            AVAILABLE="$(kubectl -n minecraft get deployment "${DEPLOY}" -o jsonpath='{.status.availableReplicas}')"
+            READY="${READY:-0}"
+            AVAILABLE="${AVAILABLE:-0}"
+            if [ -z "${DESIRED}" ] || [ "${DESIRED}" = "0" ]; then
+              echo "${DEPLOY} が停止中のため、このtaskは実行できません。" >&2
+              exit 1
+            fi
+            if [ "${READY}" -lt "${DESIRED}" ] || [ "${AVAILABLE}" -lt "${DESIRED}" ]; then
+              echo "${DEPLOY} はReady/Available replicaが不足しています。desired=${DESIRED} ready=${READY} available=${AVAILABLE}" >&2
+              exit 1
+            fi
+          }
+          ready_pod_for_app() {
+            APP="$1"
+            POD="$(kubectl -n minecraft get pod -l "app=${APP}" --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')"
+            if [ -z "${POD}" ]; then
+              echo "${APP} のRunning Podが見つかりません。" >&2
+              exit 1
+            fi
+            kubectl -n minecraft wait pod "${POD}" --for=condition=Ready --timeout=30s >/dev/null
+            echo "${POD}"
+          }
+          require_secret_key() {
+            SECRET_NAME="$1"
+            KEY_NAME="$2"
+            VALUE="$(kubectl -n minecraft get secret "${SECRET_NAME}" -o jsonpath="{.data.${KEY_NAME}}")"
+            if [ -z "${VALUE}" ]; then
+              echo "Secret ${SECRET_NAME} の key ${KEY_NAME} が確認できません。" >&2
+              exit 1
+            fi
+          }
+          ensure_bluemap_plugin_present() {
+            APP="$1"
+            POD="$(ready_pod_for_app "${APP}")"
+            if ! kubectl -n minecraft exec "${POD}" -c "${APP}" -- sh -ec 'find /data/plugins -maxdepth 1 -type f -iname "*bluemap*.jar" | grep -q .'; then
+              echo "${APP} にBlueMap plugin JARを確認できません。BlueMap導入前はreloadを実行しません。" >&2
+              exit 1
+            fi
+          }
+          preflight_bluemap_reload() {
+            ensure_no_pvc_maintenance_lock
+            deployment_ready minecraft-server1
+            deployment_ready minecraft-server2
+            require_secret_key minecraft-secret RCON_PASSWORD_SERVER1
+            require_secret_key minecraft-secret RCON_PASSWORD_SERVER2
+            ensure_bluemap_plugin_present minecraft-server1
+            ensure_bluemap_plugin_present minecraft-server2
+          }
+          label_name_valid() {
+            VALUE="$1"
+            [ "${#VALUE}" -le 63 ] || return 1
+            printf '%s' "${VALUE}" | grep -Eq '^[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$'
+          }
+          dns_prefix_valid() {
+            VALUE="$1"
+            [ "${#VALUE}" -le 253 ] || return 1
+            IFS='.' read -r -a SEGMENTS <<< "${VALUE}"
+            for SEGMENT in "${SEGMENTS[@]}"; do
+              [ -n "${SEGMENT}" ] || return 1
+              [ "${#SEGMENT}" -le 63 ] || return 1
+              printf '%s' "${SEGMENT}" | grep -Eq '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$' || return 1
+            done
+          }
+          label_key_valid() {
+            VALUE="$1"
+            [ "$(printf '%s' "${VALUE}" | awk -F/ '{print NF-1}')" -le 1 ] || return 1
+            case "${VALUE}" in
+              */*)
+                PREFIX="${VALUE%/*}"
+                NAME="${VALUE##*/}"
+                [ "${PREFIX}" != "${VALUE}" ] || return 1
+                [ -n "${PREFIX}" ] && [ -n "${NAME}" ] || return 1
+                dns_prefix_valid "${PREFIX}" && label_name_valid "${NAME}"
+                ;;
+              *)
+                label_name_valid "${VALUE}"
+                ;;
+            esac
+          }
+          label_value_valid() {
+            VALUE="$1"
+            [ -n "${VALUE}" ] || return 1
+            label_name_valid "${VALUE}"
+          }
+          create_pvc_maintenance_pod() {
+            CREATED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+            CREATED_AT_LABEL="$(date -u '+%Y%m%dT%H%M%SZ')"
+            NODE_SELECTOR_BLOCK=""
+            if [ -n "${PVC_MAINTENANCE_NODE_SELECTOR:-}" ]; then
+              if printf '%s' "${PVC_MAINTENANCE_NODE_SELECTOR}" | grep -Eq '[[:space:]]'; then
+                echo "MINECRAFT_PVC_MAINTENANCE_NODE_SELECTOR に空白、タブ、改行は使用できません。" >&2
+                exit 1
+              fi
+              if [ "$(printf '%s' "${PVC_MAINTENANCE_NODE_SELECTOR}" | awk -F= '{print NF-1}')" != "1" ]; then
+                echo "MINECRAFT_PVC_MAINTENANCE_NODE_SELECTOR は key=value の1組だけを指定してください。" >&2
+                exit 1
+              fi
+              NODE_SELECTOR_KEY="${PVC_MAINTENANCE_NODE_SELECTOR%%=*}"
+              NODE_SELECTOR_VALUE="${PVC_MAINTENANCE_NODE_SELECTOR#*=}"
+              if ! label_key_valid "${NODE_SELECTOR_KEY}" || ! label_value_valid "${NODE_SELECTOR_VALUE}"; then
+                echo "MINECRAFT_PVC_MAINTENANCE_NODE_SELECTOR は Kubernetes label key/value として不正です。" >&2
+                exit 1
+              fi
+              NODE_SELECTOR_BLOCK="            nodeSelector:
+              ${NODE_SELECTOR_KEY}: ${NODE_SELECTOR_VALUE}"
+            fi
+            cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: minecraft-pvc-emergency-maintenance
+            namespace: minecraft
+            labels:
+              app: minecraft-pvc-emergency-maintenance
+              maintenance.gamer-iris.com/type: pvc-emergency
+              maintenance.gamer-iris.com/github-run-id: "${GITHUB_RUN_ID}"
+              maintenance.gamer-iris.com/created-at: "${CREATED_AT_LABEL}"
+            annotations:
+              maintenance.gamer-iris.com/type: pvc-emergency
+              maintenance.gamer-iris.com/github-run-id: "${GITHUB_RUN_ID}"
+              maintenance.gamer-iris.com/github-actor: "${GITHUB_ACTOR}"
+              maintenance.gamer-iris.com/created-at: "${CREATED_AT}"
+              maintenance.gamer-iris.com/namespace: minecraft
+              maintenance.gamer-iris.com/pvc-names: "minecraft-proxy-pvc,minecraft-server1-pvc,minecraft-server2-pvc"
+              maintenance.gamer-iris.com/purpose: "Emergency RW maintenance for Minecraft CephFS PVC contents."
+              maintenance.gamer-iris.com/finish-task: "Run minecraft-maintenance.yml task pvc-emergency-finish after maintenance."
+          spec:
+            restartPolicy: Never
+          ${NODE_SELECTOR_BLOCK}
+            tolerations:
+              - key: node-role.kubernetes.io/control-plane
+                operator: Exists
+                effect: NoSchedule
+              - key: node-role.kubernetes.io/master
+                operator: Exists
+                effect: NoSchedule
+            automountServiceAccountToken: false
+            securityContext:
+              seccompProfile:
+                type: RuntimeDefault
+            containers:
+              - name: maintenance
+                image: ubuntu:latest
+                imagePullPolicy: Always
+                resources:
+                  requests:
+                    cpu: 50m
+                    memory: 128Mi
+                  limits:
+                    cpu: 500m
+                    memory: 512Mi
+                securityContext:
+                  runAsUser: 0
+                  runAsGroup: 0
+                  allowPrivilegeEscalation: false
+                  readOnlyRootFilesystem: true
+                command:
+                  - /bin/sh
+                  - -ec
+                args:
+                  - |
+                    echo "Minecraft PVC emergency maintenance Pod の準備が完了しました。"
+                    echo "mount 済み path:"
+                    echo "  /mnt/cephfs/minecraft-proxy"
+                    echo "  /mnt/cephfs/minecraft-server1"
+                    echo "  /mnt/cephfs/minecraft-server2"
+                    sleep infinity
+                volumeMounts:
+                  - name: tmp
+                    mountPath: /tmp
+                  - name: minecraft-proxy
+                    mountPath: /mnt/cephfs/minecraft-proxy
+                  - name: minecraft-server1
+                    mountPath: /mnt/cephfs/minecraft-server1
+                  - name: minecraft-server2
+                    mountPath: /mnt/cephfs/minecraft-server2
+            volumes:
+              - name: tmp
+                emptyDir: {}
+              - name: minecraft-proxy
+                persistentVolumeClaim:
+                  claimName: minecraft-proxy-pvc
+              - name: minecraft-server1
+                persistentVolumeClaim:
+                  claimName: minecraft-server1-pvc
+              - name: minecraft-server2
+                persistentVolumeClaim:
+                  claimName: minecraft-server2-pvc
+          EOF
+          }
+          case "${INPUT_TASK}" in
+            resource-refresh)
+              echo "${DISABLED_TASK_MESSAGE}" >&2
+              echo "resource-refresh はbaseline archive検証とrollback設計が完了するまで実行できません。" >&2
+              exit 1
+              ;;
+            backup-export)
+              echo "${DISABLED_TASK_MESSAGE}" >&2
+              echo "backup-export はCronJobとminecraft-backup-secretの正式設計が完了するまで実行できません。" >&2
+              exit 1
+              ;;
+            bluemap-reload)
+              preflight_bluemap_reload
+              run_cronjob_once minecraft-rcon-bluemap-reload 180s
+              ;;
+            pvc-emergency-start)
+              assert_pvc_maintenance_confirmed
+              ensure_pvc_maintenance_pod_absent
+              PVC_MAINTENANCE_STARTED=0
+              POD_REMOVAL_TIMED_OUT=0
+              cleanup() {
+                if [ "${PVC_MAINTENANCE_STARTED}" != "1" ]; then
+                  kubectl -n minecraft delete pod minecraft-pvc-emergency-maintenance --ignore-not-found=true >/dev/null 2>&1 || true
+                  if [ "${POD_REMOVAL_TIMED_OUT:-0}" = "1" ]; then
+                    echo "Pod終了待機timeout後のため、自動再起動は行いません。" >&2
+                  else
+                    start_minecraft >/dev/null 2>&1 || true
+                  fi
+                fi
+              }
+              trap cleanup EXIT
+              stop_minecraft
+              wait_pods_removed 300
+              create_pvc_maintenance_pod
+              kubectl -n minecraft wait pod minecraft-pvc-emergency-maintenance --for=condition=Ready --timeout=300s
+              PVC_MAINTENANCE_STARTED=1
+              echo "メンテナンス Pod の準備が完了しました。接続: kubectl -n minecraft exec -it minecraft-pvc-emergency-maintenance -- /bin/bash"
+              echo "メンテナンス完了後は必ず pvc-emergency-finish を実行してください。"
+              {
+                echo "## Minecraft PVC emergency maintenance"
+                echo ""
+                if [ -n "${PVC_MAINTENANCE_NODE_SELECTOR:-}" ]; then
+                  echo "メンテナンス Pod は nodeSelector \`${PVC_MAINTENANCE_NODE_SELECTOR}\` を指定して準備完了です。"
+                else
+                  echo "メンテナンス Pod は nodeSelector を指定せず準備完了です。"
+                fi
+                echo ""
+                echo "接続コマンド:"
+                echo "\`\`\`"
+                echo "kubectl -n minecraft exec -it minecraft-pvc-emergency-maintenance -- /bin/bash"
+                echo "\`\`\`"
+                echo ""
+                echo "mount 済み path:"
+                echo "- /mnt/cephfs/minecraft-proxy"
+                echo "- /mnt/cephfs/minecraft-server1"
+                echo "- /mnt/cephfs/minecraft-server2"
+                echo ""
+                echo "**メンテナンス完了後は必ず task \`pvc-emergency-finish\` を実行してください。**"
+              } >> "${GITHUB_STEP_SUMMARY}"
+              ;;
+            pvc-emergency-finish)
+              assert_pvc_maintenance_confirmed
+              if pvc_maintenance_pod_exists; then
+                kubectl -n minecraft delete pod minecraft-pvc-emergency-maintenance --ignore-not-found=true --wait=true
+                if pvc_maintenance_pod_exists; then
+                  echo "minecraft-pvc-emergency-maintenance の削除完了を確認できません。" >&2
+                  exit 1
+                fi
+              else
+                echo "minecraft-pvc-emergency-maintenance は存在しません。finish再実行としてMinecraftの状態を確認します。"
+                if deployment_ready_check minecraft-proxy && deployment_ready_check minecraft-server1 && deployment_ready_check minecraft-server2; then
+                  echo "Minecraft deployment は既にReadyです。pvc-emergency-finish はno-opで終了します。"
+                  {
+                    echo "## Minecraft PVC emergency maintenance already finished"
+                    echo ""
+                    echo "メンテナンス Pod は存在せず、Minecraft deployment は既にReadyです。"
+                  } >> "${GITHUB_STEP_SUMMARY}"
+                  exit 0
+                fi
+                ensure_no_active_pvc_maintenance_work
+                ensure_deployments_stopped
+                ensure_no_minecraft_pods_remaining
+                ensure_no_target_pvc_users strict
+              fi
+              start_minecraft
+              wait_minecraft_ready
+              {
+                echo "## Minecraft PVC emergency maintenance finished"
+                echo ""
+                echo "メンテナンス Pod を削除し、Minecraft deployment を起動しました。"
+                echo ""
+                echo "minecraft-proxy / minecraft-server1 / minecraft-server2 の Ready 確認が完了しました。"
+              } >> "${GITHUB_STEP_SUMMARY}"
+              ;;
+            restore)
+              echo "${DISABLED_TASK_MESSAGE}" >&2
+              echo "restore はsnapshot、必須データ検証、rollback、dry-run設計が完了するまで実行できません。" >&2
+              exit 1
+              ;;
+            *)
+              echo "不明なメンテナンス task です: ${INPUT_TASK}" >&2
+              exit 1
+              ;;
+          esac

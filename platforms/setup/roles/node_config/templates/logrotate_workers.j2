@@ -1,0 +1,10 @@
+# logrotate 設定 - workers（ubuntu-201, ubuntu-301）/ proxmox（pve-01〜pve-05）用
+# 配置先: /etc/logrotate.d/linux-platforms
+# Ansible node_config role により自動デプロイ（手動編集不要）
+/var/log/update/update.log
+{
+    su root root
+    rotate 2
+    weekly
+    missingok
+}
